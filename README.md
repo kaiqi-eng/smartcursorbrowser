@@ -7,6 +7,8 @@ AI-agent backend service for scraping dynamic and authenticated websites by driv
 - Accepts async scrape jobs with `url`, `goal`, optional login fields, and extraction schema.
 - Uses a browser session to navigate dynamic pages that traditional HTML scraping cannot capture.
 - Uses OpenAI in a step-by-step visual loop to decide navigation actions (click, type, wait, scroll).
+- Automatically retries failed actions up to 3 times by feeding the action error back into the AI for a new step.
+- Normalizes common non-Playwright selectors (for example `:contains("Login")`) into Playwright-compatible selectors.
 - Exposes Swagger UI for manual API testing.
 
 ## Requirements
@@ -29,7 +31,7 @@ npm install
 copy .env.example .env
 ```
 
-3. Set `OPENAI_API_KEY` in `.env`.
+3. Set `SERVICE_API_KEY` and `OPENAI_API_KEY` in `.env`.
 
 4. Start dev server:
 
@@ -41,6 +43,7 @@ npm run dev
 
 - [http://localhost:3000/docs](http://localhost:3000/docs)
 - OpenAPI JSON: [http://localhost:3000/openapi.json](http://localhost:3000/openapi.json)
+- In Swagger, click **Authorize** and set `x-api-key` to your `SERVICE_API_KEY`.
 
 ## API Endpoints
 
@@ -48,6 +51,8 @@ npm run dev
 - `GET /jobs/:id` - check status/progress
 - `GET /jobs/:id/result` - fetch result when completed
 - `POST /jobs/:id/cancel` - request cancellation
+
+All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
 
 ## Example Job Request
 

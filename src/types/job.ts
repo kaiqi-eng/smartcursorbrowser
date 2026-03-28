@@ -24,6 +24,7 @@ export interface ActionContext {
   screenshotBase64: string;
   textSnapshot: string;
   goal: string;
+  lastError?: string;
   loginFieldHints?: Array<Pick<LoginFieldInput, "name" | "selector" | "secret">>;
 }
 

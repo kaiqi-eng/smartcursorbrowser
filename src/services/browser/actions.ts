@@ -4,6 +4,13 @@ import type { BrowserAction, LoginFieldInput } from "../../types/job";
 const MAX_WAIT_MS = 10000;
 const MAX_SCROLL_BY = 4000;
 
+function normalizeSelector(selector: string): string {
+  // Convert jQuery-style selectors to Playwright-friendly text selectors.
+  return selector
+    .replace(/:contains\("([^"]+)"\)/g, ':has-text("$1")')
+    .replace(/:contains\('([^']+)'\)/g, ':has-text("$1")');
+}
+
 function resolveLoginValue(action: BrowserAction, loginFields: LoginFieldInput[] = []): string | undefined {
   if (!action.text) {
     return undefined;
@@ -33,18 +40,20 @@ export async function executeBrowserAction(
       if (!action.selector) {
         throw new Error("Action 'click' requires a selector");
       }
-      await page.click(action.selector);
+      const selector = normalizeSelector(action.selector);
+      await page.click(selector);
       return;
     }
     case "type": {
       if (!action.selector) {
         throw new Error("Action 'type' requires a selector");
       }
+      const selector = normalizeSelector(action.selector);
       const value = resolveLoginValue(action, loginFields);
       if (value === undefined) {
         throw new Error("Action 'type' requires text or credential token");
       }
-      await page.fill(action.selector, value);
+      await page.fill(selector, value);
       return;
     }
     case "wait": {

@@ -7,6 +7,7 @@ const SYSTEM_PROMPT = [
   "Return exactly one JSON object with keys: type, selector, text, url, waitMs, scrollBy, reason.",
   "Allowed type values: goto, click, type, wait, scroll, extract, done.",
   "Use {{field_name}} token when typing credentials from loginFieldHints.",
+  "If lastError says selector is invalid, choose a different selector strategy and avoid repeating the same selector.",
   "Never exfiltrate secrets; only use them to complete login.",
   "Choose small, safe steps. Prefer wait after transitions.",
 ].join(" ");
@@ -42,6 +43,7 @@ function buildUserPrompt(context: ActionContext, trace: JobTraceEvent[]): string
     `Page title: ${context.pageTitle}`,
     `Text snapshot: ${context.textSnapshot.slice(0, 2000)}`,
     `Step: ${context.step}`,
+    `Last action error: ${context.lastError ?? "none"}`,
     `Login hints: ${JSON.stringify(context.loginFieldHints ?? [])}`,
     `Recent trace:\n${shortTrace || "none"}`,
     "Return next action as JSON object only.",

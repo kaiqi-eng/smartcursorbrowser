@@ -9,6 +9,7 @@ function toNum(value: string | undefined, fallback: number): number {
 
 export const env = {
   port: toNum(process.env.PORT, 3000),
+  serviceApiKey: process.env.SERVICE_API_KEY ?? "",
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   maxJobSteps: toNum(process.env.MAX_JOB_STEPS, 25),

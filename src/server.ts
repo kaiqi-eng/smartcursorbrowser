@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import helmet from "helmet";
 import { env } from "./config/env";
+import { requireApiKey } from "./middleware/apiKeyAuth";
 import { apiRateLimit } from "./middleware/rateLimit";
 import { createDocsRouter } from "./routes/docs";
 import { createJobsRouter } from "./routes/jobs";
@@ -19,6 +20,7 @@ export function createApp(runtime = new RuntimeServices()) {
   });
 
   app.use(createDocsRouter());
+  app.use(requireApiKey);
   app.use("/jobs", createJobsRouter(runtime));
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

@@ -3,9 +3,11 @@ export const openApiSpec = {
   info: {
     title: "Smart Cursor Browser API",
     version: "1.0.0",
-    description: "Async AI-agent browser scraping service for dynamic/authenticated websites.",
+    description:
+      "Async AI-agent browser scraping service for dynamic/authenticated websites. The worker retries failed actions up to 3 times by feeding the last execution error back into the model, and normalizes common selector patterns such as :contains(...) to :has-text(...).",
   },
   servers: [{ url: "http://localhost:3000" }],
+  security: [{ ApiKeyAuth: [] }],
   paths: {
     "/health": {
       get: {
@@ -20,6 +22,9 @@ export const openApiSpec = {
     "/jobs": {
       post: {
         summary: "Create scrape job",
+        description:
+          "Creates an async browser-agent job. During execution, each failed action is retried (up to 3 attempts) with error-aware replanning, and common jQuery-like selectors are normalized for Playwright compatibility.",
+        security: [{ ApiKeyAuth: [] }],
         requestBody: {
           required: true,
           content: {
@@ -60,6 +65,9 @@ export const openApiSpec = {
     "/jobs/{id}": {
       get: {
         summary: "Get job status",
+        description:
+          "Returns lifecycle status and progress. If retries occur, progress messages and final error will reflect retry attempts and action-level failures.",
+        security: [{ ApiKeyAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": { description: "Current job status" },
@@ -70,6 +78,9 @@ export const openApiSpec = {
     "/jobs/{id}/result": {
       get: {
         summary: "Get final job result",
+        description:
+          "Returns extracted data and execution trace. Trace notes include attempt markers (for example '[attempt 2]') when action retries were needed.",
+        security: [{ ApiKeyAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "200": { description: "Result payload" },
@@ -81,6 +92,7 @@ export const openApiSpec = {
     "/jobs/{id}/cancel": {
       post: {
         summary: "Cancel running job",
+        security: [{ ApiKeyAuth: [] }],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           "202": { description: "Cancel accepted" },
@@ -90,6 +102,13 @@ export const openApiSpec = {
     },
   },
   components: {
+    securitySchemes: {
+      ApiKeyAuth: {
+        type: "apiKey",
+        in: "header",
+        name: "x-api-key",
+      },
+    },
     schemas: {
       CreateJobRequest: {
         type: "object",
