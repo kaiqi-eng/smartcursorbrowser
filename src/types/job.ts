@@ -1,0 +1,91 @@
+export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface LoginFieldInput {
+  name: string;
+  selector?: string;
+  value: string;
+  secret?: boolean;
+}
+
+export interface ScrapeJobRequest {
+  url: string;
+  goal: string;
+  extractionSchema?: Record<string, string>;
+  loginFields?: LoginFieldInput[];
+  maxSteps?: number;
+  timeoutMs?: number;
+  userAgent?: string;
+}
+
+export interface ActionContext {
+  step: number;
+  currentUrl: string;
+  pageTitle: string;
+  screenshotBase64: string;
+  textSnapshot: string;
+  goal: string;
+  loginFieldHints?: Array<Pick<LoginFieldInput, "name" | "selector" | "secret">>;
+}
+
+export type BrowserActionType =
+  | "goto"
+  | "click"
+  | "type"
+  | "wait"
+  | "scroll"
+  | "extract"
+  | "done";
+
+export interface BrowserAction {
+  type: BrowserActionType;
+  selector?: string;
+  text?: string;
+  url?: string;
+  waitMs?: number;
+  scrollBy?: number;
+  reason?: string;
+}
+
+export interface JobTraceEvent {
+  timestamp: string;
+  step: number;
+  action: BrowserAction;
+  note: string;
+}
+
+export interface ScrapeResult {
+  finalUrl?: string;
+  pageTitle?: string;
+  extractedData?: Record<string, unknown>;
+  rawText?: string;
+  trace: JobTraceEvent[];
+}
+
+export interface JobProgress {
+  step: number;
+  maxSteps: number;
+  message: string;
+}
+
+export interface JobRecord {
+  id: string;
+  status: JobStatus;
+  request: ScrapeJobRequest;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  progress: JobProgress;
+  error?: string;
+  result?: ScrapeResult;
+  cancelRequested: boolean;
+}
+
+export interface JobSummary {
+  id: string;
+  status: JobStatus;
+  createdAt: string;
+  updatedAt: string;
+  progress: JobProgress;
+  error?: string;
+}
