@@ -56,6 +56,11 @@ export function createScrapeWorker(jobStore: JobStore) {
               secret: field.secret ?? false,
             })),
           };
+          jobStore.updateLiveView(jobId, {
+            currentUrl: context.currentUrl,
+            pageTitle: context.pageTitle,
+            screenshotBase64: context.screenshotBase64,
+          });
 
           const action = await getNextAction(context, trace);
           const note = action.reason ?? "No reason provided";
@@ -94,7 +99,7 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
       }
 
-      const result = await extractResult(session.page, trace, job.request.extractionSchema);
+      const result = await extractResult(session.page, trace, job.request.extractionSchema, job.request.goal);
       jobStore.setResult(jobId, result);
       jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
     } catch (error) {

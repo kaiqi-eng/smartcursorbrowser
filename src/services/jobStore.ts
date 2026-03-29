@@ -1,4 +1,4 @@
-import type { JobRecord, JobStatus, ScrapeResult } from "../types/job";
+import type { JobLiveView, JobRecord, JobStatus, ScrapeResult } from "../types/job";
 
 export class JobStore {
   private readonly jobs = new Map<string, JobRecord>();
@@ -46,6 +46,19 @@ export class JobStore {
     }
     job.result = result;
     job.updatedAt = new Date().toISOString();
+    return job;
+  }
+
+  updateLiveView(id: string, view: Omit<JobLiveView, "updatedAt">): JobRecord | undefined {
+    const job = this.jobs.get(id);
+    if (!job) {
+      return undefined;
+    }
+    job.liveView = {
+      ...view,
+      updatedAt: new Date().toISOString(),
+    };
+    job.updatedAt = job.liveView.updatedAt;
     return job;
   }
 

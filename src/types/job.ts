@@ -59,6 +59,10 @@ export interface ScrapeResult {
   pageTitle?: string;
   extractedData?: Record<string, unknown>;
   rawText?: string;
+  parsedPosts?: Array<{
+    title: string;
+    content: string;
+  }>;
   trace: JobTraceEvent[];
 }
 
@@ -66,6 +70,13 @@ export interface JobProgress {
   step: number;
   maxSteps: number;
   message: string;
+}
+
+export interface JobLiveView {
+  currentUrl?: string;
+  pageTitle?: string;
+  screenshotBase64?: string;
+  updatedAt: string;
 }
 
 export interface JobRecord {
@@ -79,6 +90,7 @@ export interface JobRecord {
   progress: JobProgress;
   error?: string;
   result?: ScrapeResult;
+  liveView?: JobLiveView;
   cancelRequested: boolean;
 }
 

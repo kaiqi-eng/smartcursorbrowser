@@ -19,6 +19,10 @@ export function createApp(runtime = new RuntimeServices()) {
     res.json({ ok: true, service: "smartcursorbrowser" });
   });
 
+  app.get("/", (_req, res) => {
+    res.redirect("/app");
+  });
+  app.use("/app", express.static("public"));
   app.use(createDocsRouter());
   app.use(requireApiKey);
   app.use("/jobs", createJobsRouter(runtime));

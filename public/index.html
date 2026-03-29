@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Cursor Browser UI</title>
+    <style>
+      body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
+      .container { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
+      .panel { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 14px; }
+      h1 { margin: 0 0 12px 0; font-size: 20px; }
+      h2 { margin: 0 0 10px 0; font-size: 16px; }
+      label { display: block; font-size: 12px; margin-top: 10px; margin-bottom: 6px; color: #9ca3af; }
+      input, textarea { width: 100%; background: #0b1220; border: 1px solid #334155; border-radius: 8px; color: #e2e8f0; padding: 8px; box-sizing: border-box; }
+      textarea { min-height: 120px; resize: vertical; }
+      button { margin-top: 12px; background: #2563eb; color: #fff; border: 0; border-radius: 8px; padding: 10px 12px; cursor: pointer; font-weight: 600; }
+      button.secondary { background: #374151; }
+      .row { display: flex; gap: 8px; }
+      .statusLine { font-size: 13px; margin-top: 8px; color: #93c5fd; white-space: pre-wrap; }
+      .meta { font-size: 12px; color: #9ca3af; }
+      img { width: 100%; min-height: 360px; background: #020617; border: 1px solid #1f2937; border-radius: 8px; object-fit: contain; }
+      pre { margin: 8px 0 0 0; font-size: 12px; color: #d1d5db; background: #0b1220; border: 1px solid #334155; padding: 8px; border-radius: 8px; overflow: auto; max-height: 240px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <section class="panel">
+        <h1>Smart Cursor Browser</h1>
+        <h2>Create Job</h2>
+        <label for="apiKey">API Key</label>
+        <input id="apiKey" placeholder="testing" />
+        <label for="url">Start URL</label>
+        <input id="url" placeholder="https://example.com" value="https://example.com" />
+        <label for="goal">Goal</label>
+        <textarea id="goal" placeholder="Login and extract latest headlines">Open the page and extract the title.</textarea>
+        <label for="loginFields">Login Fields (JSON Array)</label>
+        <textarea id="loginFields">[
+  { "name": "username", "selector": "#username", "value": "demo-user" },
+  { "name": "password", "selector": "#password", "value": "demo-pass", "secret": true }
+]</textarea>
+        <div class="row">
+          <button id="createJobBtn">Create Job</button>
+          <button id="cancelJobBtn" class="secondary">Cancel Job</button>
+        </div>
+        <label for="jobId">Job ID</label>
+        <input id="jobId" />
+        <div id="lastJobId" class="meta" style="margin-top: 6px">Last job id: -</div>
+        <button id="watchBtn">Watch Job</button>
+        <div id="statusLine" class="statusLine">Idle.</div>
+        <pre id="debugBox">Debug: waiting for request.</pre>
+      </section>
+      <section class="panel">
+        <h2>Live Playwright View</h2>
+        <div id="jobMeta" class="meta">No job selected.</div>
+        <img id="liveImage" alt="Live browser screenshot" />
+        <h2 style="margin-top: 12px">Result</h2>
+        <pre id="resultBox">No result yet.</pre>
+      </section>
+    </div>
+    <script src="/app/app.js"></script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import type { JobTraceEvent, ScrapeResult } from "../../types/job";
+import { parsePostsFromRawText } from "./parsePosts";
 
 function asRecordOrUndefined(value: unknown): Record<string, unknown> | undefined {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -8,7 +9,12 @@ function asRecordOrUndefined(value: unknown): Record<string, unknown> | undefine
   return undefined;
 }
 
-export async function extractResult(page: Page, trace: JobTraceEvent[], extractionSchema?: Record<string, string>): Promise<ScrapeResult> {
+export async function extractResult(
+  page: Page,
+  trace: JobTraceEvent[],
+  extractionSchema?: Record<string, string>,
+  goal = "",
+): Promise<ScrapeResult> {
   const pageTitle = await page.title();
   const finalUrl = page.url();
   const rawText = await page.evaluate(() => document.body?.innerText?.slice(0, 8000) ?? "");
@@ -26,11 +32,14 @@ export async function extractResult(page: Page, trace: JobTraceEvent[], extracti
     extractedData = asRecordOrUndefined(fromDom);
   }
 
+  const parsedPosts = await parsePostsFromRawText(rawText, goal);
+
   return {
     finalUrl,
     pageTitle,
     rawText,
     extractedData,
+    parsedPosts,
     trace,
   };
 }

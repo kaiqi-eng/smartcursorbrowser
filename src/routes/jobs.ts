@@ -79,6 +79,24 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
     res.json(job.result);
   });
 
+  router.get("/:id/live-image", (req, res) => {
+    const job = runtime.jobStore.get(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: "Job not found" });
+      return;
+    }
+    res.json({
+      id: job.id,
+      status: job.status,
+      progress: job.progress,
+      currentUrl: job.liveView?.currentUrl,
+      pageTitle: job.liveView?.pageTitle,
+      updatedAt: job.liveView?.updatedAt,
+      imageDataUrl: job.liveView?.screenshotBase64 ? `data:image/png;base64,${job.liveView.screenshotBase64}` : null,
+      error: job.error,
+    });
+  });
+
   router.post("/:id/cancel", (req, res) => {
     const job = runtime.jobStore.requestCancel(req.params.id);
     if (!job) {
