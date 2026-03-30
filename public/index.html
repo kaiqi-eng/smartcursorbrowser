@@ -18,7 +18,14 @@
       .row { display: flex; gap: 8px; }
       .statusLine { font-size: 13px; margin-top: 8px; color: #93c5fd; white-space: pre-wrap; }
       .meta { font-size: 12px; color: #9ca3af; }
-      img { width: 100%; min-height: 360px; background: #020617; border: 1px solid #1f2937; border-radius: 8px; object-fit: contain; }
+      img {
+        width: 100%;
+        height: clamp(260px, 52vh, 520px);
+        background: #020617;
+        border: 1px solid #1f2937;
+        border-radius: 8px;
+        object-fit: contain;
+      }
       pre { margin: 8px 0 0 0; font-size: 12px; color: #d1d5db; background: #0b1220; border: 1px solid #334155; padding: 8px; border-radius: 8px; overflow: auto; max-height: 240px; }
     </style>
   </head>

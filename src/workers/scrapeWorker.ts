@@ -9,6 +9,44 @@ import { maskError } from "../services/security/redaction";
 import type { ActionContext, JobTraceEvent } from "../types/job";
 
 const MAX_ACTION_RETRIES = 3;
+const SNAPSHOT_RETRIES = 3;
+
+function isTransientContextError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("execution context was destroyed") || message.includes("cannot find context");
+}
+
+async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserSession>>["page"]): Promise<{
+  screenshotBase64: string;
+  textSnapshot: string;
+  currentUrl: string;
+  pageTitle: string;
+}> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= SNAPSHOT_RETRIES; attempt += 1) {
+    try {
+      await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+      const screenshot = await page.screenshot({ type: "png", fullPage: false });
+      const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 3500) ?? "");
+      return {
+        screenshotBase64: screenshot.toString("base64"),
+        textSnapshot,
+        currentUrl: page.url(),
+        pageTitle: await page.title(),
+      };
+    } catch (error) {
+      lastError = error;
+      if (!isTransientContextError(error) || attempt === SNAPSHOT_RETRIES) {
+        throw error;
+      }
+      await page.waitForTimeout(350);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Failed to capture page context");
+}
 
 export function createScrapeWorker(jobStore: JobStore) {
   return async function runJob(jobId: string): Promise<void> {
@@ -40,15 +78,14 @@ export function createScrapeWorker(jobStore: JobStore) {
         let shouldEnd = false;
         let retryError: string | undefined;
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
-          const screenshot = await session.page.screenshot({ type: "png", fullPage: false });
-          const textSnapshot = await session.page.evaluate(() => document.body?.innerText?.slice(0, 3500) ?? "");
+          const stepContext = await captureStepContext(session.page);
           const context: ActionContext = {
             step,
             goal: job.request.goal,
-            currentUrl: session.page.url(),
-            pageTitle: await session.page.title(),
-            screenshotBase64: screenshot.toString("base64"),
-            textSnapshot,
+            currentUrl: stepContext.currentUrl,
+            pageTitle: stepContext.pageTitle,
+            screenshotBase64: stepContext.screenshotBase64,
+            textSnapshot: stepContext.textSnapshot,
             lastError: retryError,
             loginFieldHints: (job.request.loginFields ?? []).map((field) => ({
               name: field.name,
