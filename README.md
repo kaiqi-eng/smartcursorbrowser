@@ -112,6 +112,7 @@ This repo includes `render.yaml` for Blueprint deploy.
 Notes:
 
 - Build installs Playwright Chromium (`npx playwright install chromium`) from `render.yaml`.
+- Render uses `PLAYWRIGHT_BROWSERS_PATH=/opt/render/project/src/.playwright` so browser binaries are installed and resolved from the same app directory.
 - Use `https://<your-render-service>/docs` for Swagger and `https://<your-render-service>/app` for the UI.
 - Use `x-api-key` header (your `SERVICE_API_KEY`) for all `/jobs` routes.
 
