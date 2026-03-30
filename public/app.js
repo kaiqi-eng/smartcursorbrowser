@@ -10,6 +10,8 @@ const jobMeta = document.getElementById("jobMeta");
 const resultBox = document.getElementById("resultBox");
 const liveImage = document.getElementById("liveImage");
 let pollHandle = null;
+let pollFailures = 0;
+const JOB_API_BASES = ["/jobs", "/app/jobs"];
 
 apiKeyInput.value = localStorage.getItem("service_api_key") || "testing";
 
@@ -35,12 +37,30 @@ async function parseJsonResponse(response) {
   const responseText = await response.text();
   try {
     return {
+      ok: true,
       data: responseText ? JSON.parse(responseText) : {},
       raw: responseText,
     };
   } catch {
-    throw new Error(`Non-JSON response (${response.status}): ${responseText.slice(0, 200)}`);
+    return {
+      ok: false,
+      data: {},
+      raw: responseText,
+    };
   }
+}
+
+async function requestJobApi(pathSuffix, options = {}) {
+  let lastAttempt = null;
+  for (const base of JOB_API_BASES) {
+    const response = await fetch(`${base}${pathSuffix}`, options);
+    const parsed = await parseJsonResponse(response);
+    lastAttempt = { base, response, parsed };
+    if (response.status !== 404) {
+      return lastAttempt;
+    }
+  }
+  return lastAttempt;
 }
 
 function safeParseLoginFields(raw) {
@@ -81,9 +101,10 @@ async function createJob() {
     const payload = { url, goal, loginFields: safeParseLoginFields(loginFieldsInput.value), maxSteps: 20 };
     setDebug("Request payload", payload);
     setStatus("Creating job...");
-    const response = await fetch("/jobs", { method: "POST", headers: getHeaders(), body: JSON.stringify(payload) });
-    const { data } = await parseJsonResponse(response);
-    setDebug(`Response (${response.status})`, data);
+    const attempt = await requestJobApi("", { method: "POST", headers: getHeaders(), body: JSON.stringify(payload) });
+    const { base, response, parsed } = attempt;
+    const { data } = parsed;
+    setDebug(`Response (${response.status}) via ${base}`, data);
     if (!response.ok) {
       throw new Error(data.error || "Job creation failed");
     }
@@ -108,8 +129,9 @@ async function cancelJob() {
     setStatus("Enter a job id first.");
     return;
   }
-  const response = await fetch(`/jobs/${jobId}/cancel`, { method: "POST", headers: getHeaders() });
-  const { data } = await parseJsonResponse(response);
+  const attempt = await requestJobApi(`/${jobId}/cancel`, { method: "POST", headers: getHeaders() });
+  const { response, parsed } = attempt;
+  const { data } = parsed;
   if (!response.ok) {
     setStatus(data.error || "Cancel failed");
     return;
@@ -124,11 +146,42 @@ async function pollOnce() {
     return;
   }
   try {
-    const liveResponse = await fetch(`/jobs/${jobId}/live-image`, { headers: getHeaders() });
-    const { data: live } = await parseJsonResponse(liveResponse);
-    if (!liveResponse.ok) {
-      throw new Error(live.error || "Failed to fetch live image");
+    const liveAttempt = await requestJobApi(`/${jobId}/live-image`, { headers: getHeaders() });
+    const { base: liveBase, response: liveResponse, parsed: liveParsed } = liveAttempt;
+
+    // Fallback path: if live endpoint is missing/non-json, use status endpoint.
+    if (!liveResponse.ok || !liveParsed.ok) {
+      const statusAttempt = await requestJobApi(`/${jobId}`, { headers: getHeaders() });
+      const { base: statusBase, response: statusResponse, parsed: statusParsed } = statusAttempt;
+      if (!statusResponse.ok || !statusParsed.ok) {
+        throw new Error(
+          `Polling failed (live ${liveResponse.status}, status ${statusResponse.status}): ${
+            statusParsed.ok ? statusParsed.data.error || "Unknown error" : statusParsed.raw.slice(0, 120)
+          }`,
+        );
+      }
+
+      const statusData = statusParsed.data;
+      jobMeta.textContent = `Status: ${statusData.status} | Step: ${statusData.progress.step}/${statusData.progress.maxSteps}`;
+      setStatus(statusData.progress.message || statusData.status);
+      setDebug(`Last status payload via ${statusBase}`, statusData);
+
+      if (["succeeded", "failed", "cancelled"].includes(statusData.status)) {
+        clearInterval(pollHandle);
+        pollHandle = null;
+        const resultAttempt = await requestJobApi(`/${jobId}/result`, { headers: getHeaders() });
+        const { response: resultResponse, parsed: resultParsed } = resultAttempt;
+        if (resultParsed.ok) {
+          resultBox.textContent = JSON.stringify(resultParsed.data, null, 2);
+        } else {
+          resultBox.textContent = `Result endpoint returned non-JSON (${resultResponse.status}).\n${resultParsed.raw.slice(0, 300)}`;
+        }
+      }
+      pollFailures = 0;
+      return;
     }
+    const live = liveParsed.data;
+
     jobMeta.textContent = `Status: ${live.status} | Step: ${live.progress.step}/${live.progress.maxSteps} | URL: ${live.currentUrl || "-"}`;
     setStatus(live.progress.message || live.status);
     if (live.imageDataUrl) {
@@ -137,15 +190,22 @@ async function pollOnce() {
     if (["succeeded", "failed", "cancelled"].includes(live.status)) {
       clearInterval(pollHandle);
       pollHandle = null;
-      const resultResponse = await fetch(`/jobs/${jobId}/result`, { headers: getHeaders() });
-      const { data: resultData } = await parseJsonResponse(resultResponse);
-      resultBox.textContent = JSON.stringify(resultData, null, 2);
+      const resultAttempt = await requestJobApi(`/${jobId}/result`, { headers: getHeaders() });
+      const { response: resultResponse, parsed: resultParsed } = resultAttempt;
+      if (resultParsed.ok) {
+        resultBox.textContent = JSON.stringify(resultParsed.data, null, 2);
+      } else {
+        resultBox.textContent = `Result endpoint returned non-JSON (${resultResponse.status}).\n${resultParsed.raw.slice(0, 300)}`;
+      }
     }
-    setDebug("Last live payload", live);
+    setDebug(`Last live payload via ${liveBase}`, live);
+    pollFailures = 0;
   } catch (error) {
-    setStatus(`Polling error: ${error.message}`);
+    pollFailures += 1;
+    setStatus(`Polling issue (${pollFailures}): ${error.message}`);
     setDebug("Polling Error", error.message || String(error));
-    if (pollHandle) {
+    // Stop only after repeated failures to tolerate transient deployment hiccups.
+    if (pollHandle && pollFailures >= 5) {
       clearInterval(pollHandle);
       pollHandle = null;
     }
@@ -156,6 +216,7 @@ function startPolling() {
   if (pollHandle) {
     clearInterval(pollHandle);
   }
+  pollFailures = 0;
   pollHandle = setInterval(pollOnce, 1500);
   void pollOnce();
 }
