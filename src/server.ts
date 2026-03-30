@@ -25,6 +25,8 @@ export function createApp(runtime = new RuntimeServices()) {
   app.use("/app", express.static("public"));
   app.use(createDocsRouter());
   app.use(requireApiKey);
+  // Compatibility for cached frontends that might call relative "jobs" under /app.
+  app.use("/app/jobs", createJobsRouter(runtime));
   app.use("/jobs", createJobsRouter(runtime));
 
   app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
