@@ -1,6 +1,7 @@
 import { env } from "../config/env";
 import { getNextAction } from "../services/ai/visualNavigator";
 import { executeBrowserAction } from "../services/browser/actions";
+import { attemptDeterministicLogin, isLikelyLoginPage } from "../services/browser/loginFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
@@ -99,7 +100,26 @@ export function createScrapeWorker(jobStore: JobStore) {
             screenshotBase64: context.screenshotBase64,
           });
 
-          const action = await getNextAction(context, trace);
+          let action = await getNextAction(context, trace);
+          const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
+          if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
+            const stillOnLoginPage = await isLikelyLoginPage(session.page);
+            if (stillOnLoginPage) {
+              const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+              action = loginAttempted
+                ? {
+                    type: "wait",
+                    waitMs: 1200,
+                    reason: "Detected login page; performed deterministic credential submit before continuing.",
+                  }
+                : {
+                    type: "scroll",
+                    scrollBy: 500,
+                    reason: "Detected login page; bypassing early stop to continue login discovery.",
+                  };
+            }
+          }
+
           const note = action.reason ?? "No reason provided";
           trace.push({
             timestamp: new Date().toISOString(),
