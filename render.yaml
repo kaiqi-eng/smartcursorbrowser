@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: smartcursorbrowser
+    runtime: node
+    plan: starter
+    autoDeploy: true
+    healthCheckPath: /health
+    buildCommand: npm install && npm run build && npx playwright install chromium
+    startCommand: npm run start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000
+      - key: SERVICE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: MAX_JOB_STEPS
+        value: 25
+      - key: JOB_TIMEOUT_MS
+        value: 120000
+      - key: ALLOWED_DOMAINS
+        value: ""

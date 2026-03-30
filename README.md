@@ -44,12 +44,14 @@ npm run dev
 - [http://localhost:3000/docs](http://localhost:3000/docs)
 - OpenAPI JSON: [http://localhost:3000/openapi.json](http://localhost:3000/openapi.json)
 - In Swagger, click **Authorize** and set `x-api-key` to your `SERVICE_API_KEY`.
+- Frontend UI: [http://localhost:3000/app](http://localhost:3000/app)
 
 ## API Endpoints
 
 - `POST /jobs` - create async scrape job
 - `GET /jobs/:id` - check status/progress
 - `GET /jobs/:id/result` - fetch result when completed
+- `GET /jobs/:id/live-image` - latest screenshot + page metadata for live view
 - `POST /jobs/:id/cancel` - request cancellation
 
 All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
@@ -73,6 +75,45 @@ All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
 - Credentials are request-scoped and not persisted.
 - Login secrets are redacted in API echoes and error reporting.
 - Jobs have timeout/step limits to control runaway automation.
+
+## Result Format
+
+`GET /jobs/:id/result` includes both raw and structured extraction:
+
+- `rawText`: captured text from the page
+- `parsedPosts`: AI-parsed array with minimal rewriting
+
+Example:
+
+```json
+{
+  "parsedPosts": [
+    {
+      "title": "Post title from source",
+      "content": "Post content copied as closely as possible from source text."
+    }
+  ]
+}
+```
+
+## Deploy To Render
+
+This repo includes `render.yaml` for Blueprint deploy.
+
+1. Push repo to GitHub.
+2. In Render, create a new **Blueprint** service from this repo.
+3. Render will detect `render.yaml` and create the web service.
+4. Set secret env vars in Render dashboard:
+   - `SERVICE_API_KEY`
+   - `OPENAI_API_KEY`
+5. Deploy and verify health endpoint:
+   - `https://<your-render-service>/health`
+
+Notes:
+
+- Build installs Playwright Chromium (`npx playwright install chromium`) from `render.yaml`.
+- Use `https://<your-render-service>/docs` for Swagger and `https://<your-render-service>/app` for the UI.
+- Use `x-api-key` header (your `SERVICE_API_KEY`) for all `/jobs` routes.
 
 ## Test
 
