@@ -2,7 +2,7 @@ services:
   - type: web
     name: smartcursorbrowser
     runtime: node
-    plan: starter
+    plan: free
     autoDeploy: true
     healthCheckPath: /health
     buildCommand: npm install && npm run build && npx playwright install chromium
