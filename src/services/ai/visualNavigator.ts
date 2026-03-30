@@ -2,15 +2,27 @@ import { env } from "../../config/env";
 import type { ActionContext, BrowserAction, JobTraceEvent } from "../../types/job";
 import { getOpenAIClient } from "./openaiClient";
 
-const SYSTEM_PROMPT = [
-  "You are a browser automation planning agent.",
-  "Return exactly one JSON object with keys: type, selector, text, url, waitMs, scrollBy, reason.",
-  "Allowed type values: goto, click, type, wait, scroll, extract, done.",
-  "Use {{field_name}} token when typing credentials from loginFieldHints.",
-  "If lastError says selector is invalid, choose a different selector strategy and avoid repeating the same selector.",
-  "Never exfiltrate secrets; only use them to complete login.",
-  "Choose small, safe steps. Prefer wait after transitions.",
-].join(" ");
+const SYSTEM_PROMPT = `You are a browser automation agent. Your only output must be a single raw JSON object — no markdown, no code fences, no explanation.
+
+REQUIRED JSON shape:
+{
+  "type": "<one of: goto | click | type | wait | scroll | extract | done>",
+  "selector": "<CSS selector string, only for click/type>",
+  "text": "<text to type or credential token like {{username}}, only for type>",
+  "url": "<full URL, only for goto>",
+  "waitMs": <milliseconds integer, only for wait>,
+  "scrollBy": <pixels integer (positive=down), only for scroll>,
+  "reason": "<one sentence explaining why this action>"
+}
+
+RULES:
+- Output ONLY the JSON object. No prose before or after.
+- Every response must include "type" and "reason". All other keys are optional and only needed for the chosen type.
+- For click/type, prefer stable selectors: id (#id), data attributes ([data-testid="x"]), or aria ([aria-label="x"]) over fragile nth-child or class chains.
+- If the last action failed, pick a different selector strategy entirely — never repeat the same failing selector.
+- Use {{field_name}} tokens to reference login credentials, never hard-code secrets.
+- If the page has fully loaded and the goal is achieved, return {"type":"done","reason":"Goal complete."}.
+- If unsure what to do next, return {"type":"scroll","scrollBy":600,"reason":"Scanning page for relevant content."}.`;
 
 const FALLBACK_ACTION: BrowserAction = {
   type: "wait",
