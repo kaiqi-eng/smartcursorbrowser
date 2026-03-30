@@ -6,6 +6,38 @@ interface ParsedPost {
   content: string;
 }
 
+function fallbackParsePosts(rawText: string): ParsedPost[] {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  const posts: ParsedPost[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const title = lines[i];
+    if (!title || title.length > 140) {
+      continue;
+    }
+
+    // Prefer using the next non-empty line as content.
+    const content = lines[i + 1] ?? "";
+    if (!content || content === title) {
+      continue;
+    }
+
+    posts.push({ title, content });
+    if (posts.length >= 20) {
+      break;
+    }
+  }
+
+  return posts;
+}
+
 function coercePosts(value: unknown): ParsedPost[] {
   if (!Array.isArray(value)) {
     return [];
@@ -32,50 +64,69 @@ export async function parsePostsFromRawText(rawText: string, goal: string): Prom
   }
 
   const client = getOpenAIClient();
-  const response = (await client.responses.create({
-    model: env.openaiModel,
-    input: [
-      {
-        role: "system",
-        content: [
-          {
-            type: "input_text",
-            text:
-              "Extract post-like entries from provided website text and return JSON only. Use exact wording from source as much as possible. Do not paraphrase unless absolutely needed for clarity.",
-          },
-        ],
-      },
-      {
-        role: "user",
-        content: [
-          {
-            type: "input_text",
-            text: [
-              "Return a JSON array where each item has exactly:",
-              '{ "title": "...", "content": "..." }',
-              "Rules:",
-              "- Keep title/content as close to source text as possible (minimal adjustments).",
-              "- If a title is missing, set title to empty string.",
-              "- If there are no clear posts, return []",
-              `Goal context: ${goal}`,
-              "Source text:",
-              rawText.slice(0, 12000),
-            ].join("\n"),
-          },
-        ],
-      },
-    ],
-    max_output_tokens: 1200,
-  })) as { output_text?: string };
-
-  const output = response.output_text?.trim();
-  if (!output) {
-    return [];
-  }
-
   try {
-    return coercePosts(JSON.parse(output));
+    const completion = (await client.chat.completions.create({
+      model: env.openaiModel,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Extract post-like entries from website text. Keep wording as close to source as possible. Do not paraphrase unless needed for minimal readability.",
+        },
+        {
+          role: "user",
+          content: [
+            "Return an object with a single key `posts` as an array of `{title, content}`.",
+            "Rules:",
+            "- Keep title/content very close to source text (minimal adjustments).",
+            "- If title is missing, set title to empty string.",
+            "- If there are no clear posts, return `{ \"posts\": [] }`.",
+            `Goal context: ${goal}`,
+            "Source text:",
+            rawText.slice(0, 12000),
+          ].join("\n"),
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "parsed_posts",
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              posts: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    title: { type: "string" },
+                    content: { type: "string" },
+                  },
+                  required: ["title", "content"],
+                },
+              },
+            },
+            required: ["posts"],
+          },
+          strict: true,
+        },
+      },
+      max_tokens: 1200,
+    })) as {
+      choices?: Array<{ message?: { content?: string | null } }>;
+    };
+
+    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    if (!content) {
+      return fallbackParsePosts(rawText);
+    }
+
+    const parsed = JSON.parse(content) as { posts?: unknown };
+    const coerced = coercePosts(parsed.posts);
+    return coerced.length > 0 ? coerced : fallbackParsePosts(rawText);
   } catch {
-    return [];
+    return fallbackParsePosts(rawText);
   }
 }
