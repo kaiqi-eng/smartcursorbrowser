@@ -12,6 +12,7 @@ export interface ScrapeJobRequest {
   goal: string;
   extractionSchema?: Record<string, string>;
   loginFields?: LoginFieldInput[];
+  sourceType?: "generic" | "otter";
   maxSteps?: number;
   timeoutMs?: number;
   userAgent?: string;
@@ -59,6 +60,9 @@ export interface ScrapeResult {
   pageTitle?: string;
   extractedData?: Record<string, unknown>;
   rawText?: string;
+  sourceUrl?: string;
+  summary?: string;
+  transcript?: string;
   parsedPosts?: Array<{
     title: string;
     content: string;

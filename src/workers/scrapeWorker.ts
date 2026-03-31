@@ -7,6 +7,7 @@ import {
   isLikelyLoginPage,
   navigateToLoginEntry,
 } from "../services/browser/loginFlow";
+import { performOtterLoginFlow } from "../services/browser/otterFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
@@ -66,12 +67,35 @@ export function createScrapeWorker(jobStore: JobStore) {
     const startedAtMs = Date.now();
     const trace: JobTraceEvent[] = [];
     let carryOverError: string | undefined;
+    let goalSatisfiedEarly = false;
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
     try {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
+      if (job.request.sourceType === "otter") {
+        jobStore.updateProgress(jobId, 0, "Logging in to Otter");
+        await performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []);
+        const result = await extractResult(
+          session.page,
+          trace,
+          job.request.extractionSchema,
+          job.request.goal,
+          "otter",
+        );
+        jobStore.setResult(jobId, result);
+        if (!result.goalAssessment?.meetsGoal) {
+          jobStore.setError(
+            jobId,
+            `Goal validation failed (${result.goalAssessment?.confidence ?? "low"}): ${result.goalAssessment?.reason ?? "Otter extraction failed"}`,
+          );
+          jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
+          return;
+        }
+        jobStore.updateStatus(jobId, "succeeded", "Otter transcript extraction completed");
+        return;
+      }
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
         if (!loggedIn) {
@@ -148,6 +172,40 @@ export function createScrapeWorker(jobStore: JobStore) {
           jobStore.updateProgress(jobId, step, `${action.type}: ${note}`);
 
           if (shouldStop(action, step, maxSteps, startedAtMs, timeoutMs)) {
+            if (action.type === "done" || action.type === "extract") {
+              const interimResult = await extractResult(
+                session.page,
+                trace,
+                job.request.extractionSchema,
+                job.request.goal,
+                job.request.sourceType ?? "generic",
+              );
+
+              if (interimResult.goalAssessment?.meetsGoal) {
+                goalSatisfiedEarly = true;
+                jobStore.setResult(jobId, interimResult);
+                shouldEnd = true;
+                break;
+              }
+
+              const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
+              if (hasLoginFields) {
+                const loggedIn = await isLikelyLoggedIn(session.page);
+                if (!loggedIn) {
+                  await navigateToLoginEntry(session.page);
+                  await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+                }
+              }
+
+              carryOverError = `Goal not met yet at step ${step}; continue exploring target content`;
+              jobStore.updateProgress(
+                jobId,
+                step,
+                "AI attempted completion but goal validation failed; continuing to gather posts",
+              );
+              break;
+            }
+
             shouldEnd = true;
             break;
           }
@@ -195,16 +253,26 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
       }
 
-      const result = await extractResult(session.page, trace, job.request.extractionSchema, job.request.goal);
-      jobStore.setResult(jobId, result);
-      if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
-        jobStore.setError(
-          jobId,
-          `Goal validation failed (${result.goalAssessment.confidence}): ${result.goalAssessment.reason}`,
-        );
-        jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
-      } else {
+      if (goalSatisfiedEarly) {
         jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
+      } else {
+        const result = await extractResult(
+          session.page,
+          trace,
+          job.request.extractionSchema,
+          job.request.goal,
+          job.request.sourceType ?? "generic",
+        );
+        jobStore.setResult(jobId, result);
+        if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
+          jobStore.setError(
+            jobId,
+            `Goal validation failed after full run (${result.goalAssessment.confidence}): ${result.goalAssessment.reason}`,
+          );
+          jobStore.updateStatus(jobId, "failed", "Goal not satisfied after max steps");
+        } else {
+          jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
+        }
       }
     } catch (error) {
       jobStore.setError(jobId, maskError(error));

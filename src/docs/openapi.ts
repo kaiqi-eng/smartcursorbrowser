@@ -62,6 +62,35 @@ export const openApiSpec = {
         },
       },
     },
+    "/jobs/otter-transcript": {
+      post: {
+        summary: "Create Otter transcript extraction job",
+        description:
+          "Queues a deterministic Otter flow that logs in and extracts transcript plus meeting summary. Credentials are accepted in request body and redacted in echoed response.",
+        security: [{ ApiKeyAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/OtterTranscriptRequest" },
+              examples: {
+                otterTranscript: {
+                  summary: "Otter transcript extraction",
+                  value: {
+                    url: "https://otter.ai/u/example?tab=chat&view=transcript",
+                    maxSteps: 8,
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": { description: "Job accepted" },
+          "400": { description: "Invalid request payload" },
+        },
+      },
+    },
     "/jobs/{id}": {
       get: {
         summary: "Get job status",
@@ -135,6 +164,23 @@ export const openApiSpec = {
           },
           maxSteps: { type: "integer", minimum: 1, maximum: 100, default: 25 },
           timeoutMs: { type: "integer", minimum: 5000, maximum: 900000, default: 120000 },
+        },
+      },
+      OtterTranscriptRequest: {
+        type: "object",
+        required: ["url"],
+        properties: {
+          url: { type: "string", format: "uri", example: "https://otter.ai/u/example?tab=chat&view=transcript" },
+          email: { type: "string", format: "email", example: "user@example.com", description: "Optional; provide with password to log in." },
+          password: {
+            type: "string",
+            format: "password",
+            minLength: 8,
+            description: "Optional; provide with email to log in.",
+          },
+          maxSteps: { type: "integer", minimum: 1, maximum: 100, default: 8 },
+          timeoutMs: { type: "integer", minimum: 5000, maximum: 900000, default: 120000 },
+          userAgent: { type: "string", example: "Mozilla/5.0" },
         },
       },
     },

@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import type { JobTraceEvent, ScrapeResult } from "../../types/job";
 import { parsePostsFromRawText } from "./parsePosts";
+import { extractOtterSummaryAndTranscript } from "./otterExtract";
 import { validateGoalAgainstExtraction } from "./validateGoal";
 
 const EXTRACTION_RETRIES = 3;
@@ -42,9 +43,30 @@ export async function extractResult(
   trace: JobTraceEvent[],
   extractionSchema?: Record<string, string>,
   goal = "",
+  sourceType: "generic" | "otter" = "generic",
 ): Promise<ScrapeResult> {
   const pageTitle = await page.title();
   const finalUrl = page.url();
+
+  if (sourceType === "otter") {
+    const otterResult = await extractOtterSummaryAndTranscript(page);
+    const meetsGoal = Boolean(otterResult.summary || otterResult.transcript);
+    return {
+      finalUrl,
+      sourceUrl: finalUrl,
+      pageTitle,
+      summary: otterResult.summary,
+      transcript: otterResult.transcript,
+      goalAssessment: {
+        meetsGoal,
+        confidence: meetsGoal ? "high" : "low",
+        reason: meetsGoal ? "Extracted summary or transcript from Otter page." : "Could not locate summary or transcript.",
+        missingRequirements: meetsGoal ? [] : ["summary or transcript"],
+      },
+      trace,
+    };
+  }
+
   const rawText = await withContextRetry(page, () => page.evaluate(() => document.body?.innerText?.slice(0, 8000) ?? ""));
 
   let extractedData: Record<string, unknown> | undefined;

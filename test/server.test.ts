@@ -52,4 +52,31 @@ describe("server", () => {
     });
     expect(response.status).toBe(401);
   });
+
+  it("accepts otter transcript jobs and redacts credentials", async () => {
+    const app = createApp(createTestRuntime());
+    const response = await request(app).post("/jobs/otter-transcript").set("x-api-key", "test-api-key").send({
+      url: "https://otter.ai/u/example?tab=chat&view=transcript",
+      email: "user@example.com",
+      password: "12345678",
+    });
+    expect(response.status).toBe(202);
+    expect(response.body.jobId).toBeDefined();
+    expect(response.body.request.sourceType).toBe("otter");
+    expect(response.body.request.loginFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "email", value: expect.stringMatching(/^\*+/) }),
+        expect.objectContaining({ name: "password", value: expect.stringMatching(/^\*+/) }),
+      ]),
+    );
+  });
+
+  it("accepts otter transcript jobs without credentials", async () => {
+    const app = createApp(createTestRuntime());
+    const response = await request(app).post("/jobs/otter-transcript").set("x-api-key", "test-api-key").send({
+      url: "https://otter.ai/u/example?tab=chat&view=transcript",
+    });
+    expect(response.status).toBe(202);
+    expect(response.body.request.loginFields).toEqual([]);
+  });
 });

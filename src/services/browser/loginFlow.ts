@@ -114,6 +114,17 @@ export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
 }
 
 export async function navigateToLoginEntry(page: Page): Promise<boolean> {
+  // Site-specific fallback for Real Vision where auth lives on app subdomain.
+  try {
+    const url = new URL(page.url());
+    if (url.hostname.endsWith("realvision.com") && !url.hostname.startsWith("app.")) {
+      await page.goto("https://app.realvision.com/", { waitUntil: "domcontentloaded", timeout: 15000 });
+      return true;
+    }
+  } catch {
+    // Continue generic selector-based navigation.
+  }
+
   for (const selector of LOGIN_ENTRY_SELECTORS) {
     try {
       const locator = page.locator(selector).first();

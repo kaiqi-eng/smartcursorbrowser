@@ -4,6 +4,7 @@ import type { RuntimeServices } from "../services/runtime";
 import { redactLoginFields } from "../services/security/redaction";
 import type { JobRecord, JobSummary } from "../types/job";
 import { validateScrapeJobRequest } from "../validation/jobRequest";
+import { validateOtterTranscriptRequest } from "../validation/otterTranscriptRequest";
 
 function toSummary(job: JobRecord): JobSummary {
   return {
@@ -18,6 +19,56 @@ function toSummary(job: JobRecord): JobSummary {
 
 export function createJobsRouter(runtime: RuntimeServices): Router {
   const router = Router();
+
+  router.post("/otter-transcript", (req, res) => {
+    try {
+      const payload = validateOtterTranscriptRequest(req.body);
+      const now = new Date().toISOString();
+      const id = uuidv4();
+      const job: JobRecord = {
+        id,
+        status: "queued",
+        request: {
+          url: payload.url,
+          goal: "Extract transcript and summary from the Otter transcript page.",
+          sourceType: "otter",
+          loginFields: [
+            { name: "email", value: payload.email, secret: true },
+            { name: "password", value: payload.password, secret: true },
+          ],
+          maxSteps: payload.maxSteps ?? 8,
+          timeoutMs: payload.timeoutMs,
+          userAgent: payload.userAgent,
+        },
+        createdAt: now,
+        updatedAt: now,
+        progress: {
+          step: 0,
+          maxSteps: payload.maxSteps ?? 8,
+          message: "Queued",
+        },
+        cancelRequested: false,
+      };
+      runtime.jobStore.create(job);
+      runtime.jobQueue.enqueue(id);
+
+      res.status(202).json({
+        jobId: id,
+        status: job.status,
+        request: {
+          url: payload.url,
+          maxSteps: payload.maxSteps ?? 8,
+          timeoutMs: payload.timeoutMs,
+          userAgent: payload.userAgent,
+          loginFields: redactLoginFields(job.request.loginFields),
+          sourceType: "otter",
+        },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Invalid request";
+      res.status(400).json({ error: message });
+    }
+  });
 
   router.post("/", (req, res) => {
     try {
