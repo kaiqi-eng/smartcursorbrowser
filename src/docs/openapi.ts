@@ -78,6 +78,8 @@ export const openApiSpec = {
                   summary: "Otter transcript extraction",
                   value: {
                     url: "https://otter.ai/u/example?tab=chat&view=transcript",
+                    email: "user@example.com",
+                    password: "correct-horse-battery-staple",
                     maxSteps: 8,
                   },
                 },
@@ -168,15 +170,14 @@ export const openApiSpec = {
       },
       OtterTranscriptRequest: {
         type: "object",
-        required: ["url"],
+        required: ["url", "email", "password"],
         properties: {
           url: { type: "string", format: "uri", example: "https://otter.ai/u/example?tab=chat&view=transcript" },
-          email: { type: "string", format: "email", example: "user@example.com", description: "Optional; provide with password to log in." },
+          email: { type: "string", format: "email", example: "user@example.com" },
           password: {
             type: "string",
             format: "password",
             minLength: 8,
-            description: "Optional; provide with email to log in.",
           },
           maxSteps: { type: "integer", minimum: 1, maximum: 100, default: 8 },
           timeoutMs: { type: "integer", minimum: 5000, maximum: 900000, default: 120000 },

@@ -71,12 +71,11 @@ describe("server", () => {
     );
   });
 
-  it("accepts otter transcript jobs without credentials", async () => {
+  it("rejects otter transcript jobs without credentials", async () => {
     const app = createApp(createTestRuntime());
     const response = await request(app).post("/jobs/otter-transcript").set("x-api-key", "test-api-key").send({
       url: "https://otter.ai/u/example?tab=chat&view=transcript",
     });
-    expect(response.status).toBe(202);
-    expect(response.body.request.loginFields).toEqual([]);
+    expect(response.status).toBe(400);
   });
 });

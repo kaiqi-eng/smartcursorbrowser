@@ -75,6 +75,9 @@ export function createScrapeWorker(jobStore: JobStore) {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
       if (job.request.sourceType === "otter") {
+        if ((job.request.loginFields?.length ?? 0) === 0) {
+          throw new Error("Otter jobs require login credentials");
+        }
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
         await performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []);
         const result = await extractResult(

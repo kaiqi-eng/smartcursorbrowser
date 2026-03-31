@@ -67,24 +67,22 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
   }
   let emailFilled = false;
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (attempt > 0) {
-      await clickIfVisible(loginPage, [
-        "button:has-text('Other ways to log in')",
-        "[role='button']:has-text('Other ways to log in')",
-        "text=Other ways to log in",
-      ]);
-      await loginPage.waitForTimeout(1000);
-    }
+    await clickIfVisible(loginPage, [
+      "button:has-text('Other ways to log in')",
+      "[role='button']:has-text('Other ways to log in')",
+      "text=Other ways to log in",
+    ]);
+    await loginPage.waitForTimeout(900);
+
     emailFilled = await fillIfVisible(
       loginPage,
       [
-        "input[type='email']",
         "input[placeholder*='email' i]",
+        "input[type='email']",
+        "input[type='text']",
         "input[aria-label*='email' i]",
         "input[name*='email' i]",
         "input[id*='email' i]",
-        "[role='textbox'][aria-label*='email' i]",
-        "input[type='text']",
       ],
       email,
     );
@@ -93,36 +91,28 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
     }
   }
   if (!emailFilled) {
-    const preview = await loginPage.evaluate(() => document.body?.innerText?.slice(0, 600) ?? "").catch(() => "");
-    throw new Error(`Unable to locate Otter email input on ${loginPage.url()} :: ${preview}`);
+    throw new Error("Unable to locate Otter email input");
   }
 
-  let passwordFilled = false;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await clickIfVisible(loginPage, [
-      "button:has-text('Sign in')",
-      "[role='button']:has-text('Sign in')",
-      "button:has-text('Next')",
-      "[role='button']:has-text('Next')",
-    ]);
-    await loginPage.waitForTimeout(900);
+  await clickIfVisible(loginPage, [
+    "button:has-text('Sign in')",
+    "button:has-text('Next')",
+    "[role='button']:has-text('Sign in')",
+    "[role='button']:has-text('Next')",
+  ]);
+  await loginPage.waitForTimeout(1200);
 
-    passwordFilled = await fillIfVisible(
-      loginPage,
-      [
-        "input[type='password']",
-        "input[placeholder*='password' i]",
-        "input[aria-label*='password' i]",
-        "input[name*='password' i]",
-        "input[id*='password' i]",
-        "[role='textbox'][aria-label*='password' i]",
-      ],
-      password,
-    );
-    if (passwordFilled) {
-      break;
-    }
-  }
+  const passwordFilled = await fillIfVisible(
+    loginPage,
+    [
+      "input[type='password']",
+      "input[placeholder*='password' i]",
+      "input[aria-label*='password' i]",
+      "input[name*='password' i]",
+      "input[id*='password' i]",
+    ],
+    password,
+  );
   if (!passwordFilled) {
     throw new Error("Unable to locate Otter password input");
   }
@@ -132,7 +122,17 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
     "button:has-text('Sign in')",
     "[role='button']:has-text('Next')",
   ]);
-  await loginPage.waitForLoadState("domcontentloaded");
+  await loginPage.waitForTimeout(2200);
+
+  const profileResponse = await loginPage.request.get("https://otter.ai/forward/api/v1/user/profile");
+  if (profileResponse.status() !== 200) {
+    throw new Error("Otter login did not establish authenticated session");
+  }
+  const profileData = (await profileResponse.json()) as { email?: string; user?: { email?: string } };
+  const loggedInEmail = profileData.email ?? profileData.user?.email ?? "";
+  if (loggedInEmail.toLowerCase() !== email.toLowerCase()) {
+    throw new Error("Otter login completed but authenticated user does not match provided email");
+  }
 }
 
 export async function performOtterLoginFlow(page: Page, url: string, loginFields: LoginFieldInput[]): Promise<void> {

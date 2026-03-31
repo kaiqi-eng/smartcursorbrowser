@@ -30,7 +30,21 @@ interface OtterSpeechPayload {
     summary?: string;
     short_abstract_summary?: unknown;
     transcripts?: OtterTranscriptItem[];
+    speech_outline?: unknown;
   };
+}
+
+interface OtterAbstractSummaryPayload {
+  abstract_summary?: {
+    short_summary?: string;
+  };
+}
+
+interface OtterActionItemsPayload {
+  speech_action_items?: Array<{
+    text?: string;
+    order?: string;
+  }>;
 }
 
 function withSummaryView(url: string): string {
@@ -42,6 +56,81 @@ function withSummaryView(url: string): string {
   }
   const separator = url.includes("?") ? "&" : "?";
   return `${url}${separator}view=summary`;
+}
+
+function canonicalSummaryUrl(sourceUrl: string): string {
+  try {
+    const parsed = new URL(sourceUrl);
+    const match = parsed.pathname.match(/^\/u\/([^/?#]+)/i);
+    if (!match?.[1]) {
+      return withSummaryView(sourceUrl);
+    }
+    return `${parsed.origin}/u/${match[1]}?view=summary`;
+  } catch {
+    return withSummaryView(sourceUrl);
+  }
+}
+
+function cleanText(value: string | undefined): string {
+  return normalizeWhitespace(value ?? "");
+}
+
+function isRichSummary(value: string): boolean {
+  const text = value.toLowerCase();
+  return text.includes("action items") && text.includes("outline");
+}
+
+function buildStructuredSummary(params: {
+  title: string;
+  sourceUrl: string;
+  actionItems: Array<{ text?: string; order?: string }>;
+  outline:
+    | Array<{
+        text?: string;
+        segments?: Array<{ text?: string }>;
+      }>
+    | null
+    | undefined;
+}): string {
+  const hasActionItems = params.actionItems.some((item) => cleanText(item.text).length > 0);
+  const hasOutline = (params.outline ?? []).some(
+    (block) => cleanText(block.text).length > 0 || (block.segments ?? []).some((segment) => cleanText(segment.text).length > 0),
+  );
+  if (!hasActionItems && !hasOutline) {
+    return "";
+  }
+
+  const lines: string[] = [];
+  if (params.title) {
+    lines.push(params.title);
+  }
+  lines.push("Transcript", "", canonicalSummaryUrl(params.sourceUrl), "", "Action Items");
+
+  const actionItems = [...params.actionItems]
+    .sort((a, b) => (a.order ?? "").localeCompare(b.order ?? ""))
+    .map((item) => cleanText(item.text))
+    .filter(Boolean);
+  if (actionItems.length > 0) {
+    for (const item of actionItems) {
+      lines.push(`[ ] ${item}`);
+    }
+  }
+
+  lines.push("Outline");
+  const outlineBlocks = params.outline ?? [];
+  for (const block of outlineBlocks) {
+    const heading = cleanText(block.text);
+    if (heading) {
+      lines.push(heading);
+    }
+    for (const segment of block.segments ?? []) {
+      const segmentText = cleanText(segment.text);
+      if (segmentText) {
+        lines.push(segmentText);
+      }
+    }
+  }
+  return lines.join("\n").trim();
 }
 
 async function readClipboardSummary(page: Page): Promise<string> {
@@ -162,12 +251,27 @@ export async function extractOtterSummaryAndTranscript(page: Page): Promise<{
     throw new Error("Could not parse Otter note id from URL");
   }
 
-  const speechResponse = await page.request.get(`https://otter.ai/forward/api/v1/speech?otid=${otid}`);
+  const [speechResponse, abstractResponse, actionItemsResponse] = await Promise.all([
+    page.request.get(`https://otter.ai/forward/api/v1/speech?otid=${otid}`),
+    page.request.get(`https://otter.ai/forward/api/v1/abstract_summary?otid=${otid}`),
+    page.request.get(`https://otter.ai/forward/api/v1/speech_action_items?otid=${otid}`),
+  ]);
   const speechPayload = (await speechResponse.json()) as OtterSpeechPayload;
+  const abstractPayload = (await abstractResponse.json()) as OtterAbstractSummaryPayload;
+  const actionItemsPayload = (await actionItemsResponse.json()) as OtterActionItemsPayload;
   const speech = speechPayload.speech ?? {};
   const transcriptFromApi = formatTranscriptFromSpeech(speech.transcripts ?? []);
   const summaryFromClipboard = await readClipboardSummary(page);
   const summaryFromApi = summaryFromPayload(speech.title ?? "", speech.summary, speech.short_abstract_summary, currentUrl);
+  const structuredSummary = buildStructuredSummary({
+    title: speech.title ?? "",
+    sourceUrl: currentUrl,
+    actionItems: actionItemsPayload.speech_action_items ?? [],
+    outline: Array.isArray(speech.speech_outline)
+      ? (speech.speech_outline as Array<{ text?: string; segments?: Array<{ text?: string }> }>)
+      : [],
+  });
+  const shortSummary = cleanText(abstractPayload.abstract_summary?.short_summary);
   let bodyText = "";
   try {
     bodyText = await page.locator("body").innerText();
@@ -187,7 +291,13 @@ export async function extractOtterSummaryAndTranscript(page: Page): Promise<{
   );
 
   return {
-    summary: summaryFromClipboard || summaryFromApi || fallbackSummary,
+    summary:
+      (isRichSummary(summaryFromClipboard) ? summaryFromClipboard : "") ||
+      structuredSummary ||
+      shortSummary ||
+      summaryFromClipboard ||
+      summaryFromApi ||
+      fallbackSummary,
     transcript: transcriptFromApi || fallbackTranscript,
   };
 }
