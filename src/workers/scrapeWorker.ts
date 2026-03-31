@@ -1,7 +1,12 @@
 import { env } from "../config/env";
 import { getNextAction } from "../services/ai/visualNavigator";
 import { executeBrowserAction } from "../services/browser/actions";
-import { attemptDeterministicLogin, isLikelyLoginPage, navigateToLoginEntry } from "../services/browser/loginFlow";
+import {
+  attemptDeterministicLogin,
+  isLikelyLoggedIn,
+  isLikelyLoginPage,
+  navigateToLoginEntry,
+} from "../services/browser/loginFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
@@ -68,11 +73,12 @@ export function createScrapeWorker(jobStore: JobStore) {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
       if ((job.request.loginFields?.length ?? 0) > 0) {
-        const onLoginPage = await isLikelyLoginPage(session.page);
-        if (!onLoginPage) {
+        const loggedIn = await isLikelyLoggedIn(session.page);
+        if (!loggedIn) {
           const movedToLogin = await navigateToLoginEntry(session.page);
           if (movedToLogin) {
             jobStore.updateProgress(jobId, 0, "Navigated from home page to login entry");
+            await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
           }
         }
       }
@@ -114,8 +120,9 @@ export function createScrapeWorker(jobStore: JobStore) {
           let action = await getNextAction(context, trace);
           const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
           if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
-            const stillOnLoginPage = await isLikelyLoginPage(session.page);
-            if (stillOnLoginPage) {
+            const loggedIn = await isLikelyLoggedIn(session.page);
+            if (!loggedIn) {
+              await navigateToLoginEntry(session.page);
               const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
               action = loginAttempted
                 ? {
@@ -190,7 +197,15 @@ export function createScrapeWorker(jobStore: JobStore) {
 
       const result = await extractResult(session.page, trace, job.request.extractionSchema, job.request.goal);
       jobStore.setResult(jobId, result);
-      jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
+      if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
+        jobStore.setError(
+          jobId,
+          `Goal validation failed (${result.goalAssessment.confidence}): ${result.goalAssessment.reason}`,
+        );
+        jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
+      } else {
+        jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
+      }
     } catch (error) {
       jobStore.setError(jobId, maskError(error));
       jobStore.updateStatus(jobId, "failed", "Execution failed");

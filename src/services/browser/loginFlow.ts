@@ -86,7 +86,31 @@ export async function isLikelyLoginPage(page: Page): Promise<boolean> {
     return true;
   }
   const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 1000) ?? "")).toLowerCase();
-  return text.includes("sign in") || text.includes("log in") || text.includes("password");
+  return text.includes("sign in") || text.includes("log in") || text.includes("login") || text.includes("password");
+}
+
+export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
+  const hasPassword = (await page.locator("input[type='password']").count()) > 0;
+  if (hasPassword) {
+    return false;
+  }
+
+  const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 2000) ?? "")).toLowerCase();
+  const hasAuthPrompt = text.includes("sign in") || text.includes("log in") || text.includes("login");
+  const hasLoggedInCue =
+    text.includes("sign out") ||
+    text.includes("logout") ||
+    text.includes("my account") ||
+    text.includes("profile") ||
+    text.includes("dashboard");
+
+  if (hasLoggedInCue) {
+    return true;
+  }
+  if (hasAuthPrompt) {
+    return false;
+  }
+  return true;
 }
 
 export async function navigateToLoginEntry(page: Page): Promise<boolean> {

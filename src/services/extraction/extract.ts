@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 import type { JobTraceEvent, ScrapeResult } from "../../types/job";
 import { parsePostsFromRawText } from "./parsePosts";
+import { validateGoalAgainstExtraction } from "./validateGoal";
 
 const EXTRACTION_RETRIES = 3;
 
@@ -62,6 +63,14 @@ export async function extractResult(
   }
 
   const parsedPosts = await parsePostsFromRawText(rawText, goal);
+  const goalAssessment = await validateGoalAgainstExtraction({
+    goal,
+    finalUrl,
+    pageTitle,
+    rawText,
+    parsedPosts,
+    extractedData,
+  });
 
   return {
     finalUrl,
@@ -69,6 +78,7 @@ export async function extractResult(
     rawText,
     extractedData,
     parsedPosts,
+    goalAssessment,
     trace,
   };
 }

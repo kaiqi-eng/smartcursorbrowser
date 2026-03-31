@@ -63,6 +63,12 @@ export interface ScrapeResult {
     title: string;
     content: string;
   }>;
+  goalAssessment?: {
+    meetsGoal: boolean;
+    confidence: "low" | "medium" | "high";
+    reason: string;
+    missingRequirements: string[];
+  };
   trace: JobTraceEvent[];
 }
 
