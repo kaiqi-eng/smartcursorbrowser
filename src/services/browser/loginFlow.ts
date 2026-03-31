@@ -120,9 +120,26 @@ export async function navigateToLoginEntry(page: Page): Promise<boolean> {
       if ((await locator.count()) === 0) {
         continue;
       }
+      const currentUrl = page.url();
+      const href = await locator.getAttribute("href");
+      if (href && !href.startsWith("#") && !href.toLowerCase().startsWith("javascript:")) {
+        const resolvedUrl = new URL(href, currentUrl).toString();
+        await page.goto(resolvedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+        return true;
+      }
+
       await locator.click({ timeout: 3000 });
       await page.waitForLoadState("domcontentloaded", { timeout: 8000 });
-      return true;
+      if (page.url() !== currentUrl) {
+        return true;
+      }
+
+      // If click did not navigate current tab but link has href, force navigate.
+      if (href) {
+        const resolvedUrl = new URL(href, currentUrl).toString();
+        await page.goto(resolvedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+        return true;
+      }
     } catch {
       // Try next selector
     }
