@@ -60,6 +60,7 @@ export function createScrapeWorker(jobStore: JobStore) {
     const timeoutMs = job.request.timeoutMs ?? env.defaultJobTimeoutMs;
     const startedAtMs = Date.now();
     const trace: JobTraceEvent[] = [];
+    let carryOverError: string | undefined;
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
@@ -77,7 +78,8 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
 
         let shouldEnd = false;
-        let retryError: string | undefined;
+        let retryError: string | undefined = carryOverError;
+        let stepExecutionFailed = false;
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
           const stepContext = await captureStepContext(session.page);
           const context: ActionContext = {
@@ -137,6 +139,7 @@ export function createScrapeWorker(jobStore: JobStore) {
           try {
             await executeBrowserAction(session.page, action, job.request.loginFields ?? []);
             retryError = undefined;
+            carryOverError = undefined;
             break;
           } catch (error) {
             retryError = maskError(error);
@@ -146,13 +149,33 @@ export function createScrapeWorker(jobStore: JobStore) {
               `Retrying action after error (${attempt}/${MAX_ACTION_RETRIES}): ${retryError}`,
             );
             if (attempt === MAX_ACTION_RETRIES) {
-              throw new Error(`Action failed after ${MAX_ACTION_RETRIES} attempts: ${retryError}`);
+              carryOverError = retryError;
+              stepExecutionFailed = true;
+              trace.push({
+                timestamp: new Date().toISOString(),
+                step,
+                action: {
+                  type: "wait",
+                  waitMs: 800,
+                  reason: "Action failed this step; carrying error into next replanning step.",
+                },
+                note: `Step execution failed after ${MAX_ACTION_RETRIES} attempts: ${retryError}`,
+              });
+              jobStore.updateProgress(
+                jobId,
+                step,
+                `Action failed after ${MAX_ACTION_RETRIES} attempts; continuing with next AI step`,
+              );
+              break;
             }
           }
         }
 
         if (shouldEnd) {
           break;
+        }
+        if (stepExecutionFailed) {
+          continue;
         }
       }
 
