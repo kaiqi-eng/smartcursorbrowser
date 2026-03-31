@@ -23,6 +23,47 @@ function resolveLoginValue(action: BrowserAction, loginFields: LoginFieldInput[]
   return matched?.value;
 }
 
+function isLoginishSelector(selector: string): boolean {
+  const value = selector.toLowerCase();
+  return value.includes("login") || value.includes("log in") || value.includes("sign in") || value.includes("signin");
+}
+
+async function clickWithLoginFallback(page: Page, selector: string): Promise<void> {
+  try {
+    await page.click(selector);
+    return;
+  } catch (error) {
+    if (!isLoginishSelector(selector)) {
+      throw error;
+    }
+  }
+
+  const fallbacks = [
+    "a:has-text('Login')",
+    "a:has-text('Log in')",
+    "a:has-text('Sign in')",
+    "a:has-text('Sign In')",
+    "text=Login",
+    "text=Sign in",
+    "text=Sign In",
+  ];
+
+  for (const fallback of fallbacks) {
+    const locator = page.locator(fallback).first();
+    if ((await locator.count()) === 0) {
+      continue;
+    }
+    try {
+      await locator.click({ timeout: 3000 });
+      return;
+    } catch {
+      // try next fallback selector
+    }
+  }
+
+  throw new Error(`Failed login-ish click using selector '${selector}' and all fallback selectors`);
+}
+
 export async function executeBrowserAction(
   page: Page,
   action: BrowserAction,
@@ -41,7 +82,7 @@ export async function executeBrowserAction(
         throw new Error("Action 'click' requires a selector");
       }
       const selector = normalizeSelector(action.selector);
-      await page.click(selector);
+      await clickWithLoginFallback(page, selector);
       return;
     }
     case "type": {

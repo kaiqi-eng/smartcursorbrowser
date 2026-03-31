@@ -1,7 +1,7 @@
 import { env } from "../config/env";
 import { getNextAction } from "../services/ai/visualNavigator";
 import { executeBrowserAction } from "../services/browser/actions";
-import { attemptDeterministicLogin, isLikelyLoginPage } from "../services/browser/loginFlow";
+import { attemptDeterministicLogin, isLikelyLoginPage, navigateToLoginEntry } from "../services/browser/loginFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
@@ -67,6 +67,15 @@ export function createScrapeWorker(jobStore: JobStore) {
     try {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
+      if ((job.request.loginFields?.length ?? 0) > 0) {
+        const onLoginPage = await isLikelyLoginPage(session.page);
+        if (!onLoginPage) {
+          const movedToLogin = await navigateToLoginEntry(session.page);
+          if (movedToLogin) {
+            jobStore.updateProgress(jobId, 0, "Navigated from home page to login entry");
+          }
+        }
+      }
       for (let step = 1; step <= maxSteps; step += 1) {
         const currentJob = jobStore.get(jobId);
         if (!currentJob) {

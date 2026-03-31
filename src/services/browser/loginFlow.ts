@@ -12,6 +12,16 @@ const SUBMIT_SELECTORS = [
   "[role='button']:has-text('Login')",
 ];
 
+const LOGIN_ENTRY_SELECTORS = [
+  "a:has-text('Login')",
+  "a:has-text('Log in')",
+  "a:has-text('Sign in')",
+  "a:has-text('Sign In')",
+  "text=Login",
+  "text=Sign in",
+  "text=Sign In",
+];
+
 function lower(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -77,6 +87,23 @@ export async function isLikelyLoginPage(page: Page): Promise<boolean> {
   }
   const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 1000) ?? "")).toLowerCase();
   return text.includes("sign in") || text.includes("log in") || text.includes("password");
+}
+
+export async function navigateToLoginEntry(page: Page): Promise<boolean> {
+  for (const selector of LOGIN_ENTRY_SELECTORS) {
+    try {
+      const locator = page.locator(selector).first();
+      if ((await locator.count()) === 0) {
+        continue;
+      }
+      await locator.click({ timeout: 3000 });
+      await page.waitForLoadState("domcontentloaded", { timeout: 8000 });
+      return true;
+    } catch {
+      // Try next selector
+    }
+  }
+  return false;
 }
 
 export async function attemptDeterministicLogin(page: Page, loginFields: LoginFieldInput[]): Promise<boolean> {
