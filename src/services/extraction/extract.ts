@@ -141,55 +141,50 @@ async function collectFinalPageSnapshot(page: Page): Promise<{ rawText: string }
   const rawText = await withContextRetry(page, () =>
     page.evaluate(() => {
       const chunks: string[] = [];
-      const seen = new Set<string>();
+      const seen: Record<string, true> = {};
 
-      const pushChunk = (value: string | null | undefined): void => {
-        const normalized = (value ?? "").replace(/\s+/g, " ").trim();
-        if (!normalized || seen.has(normalized)) {
-          return;
-        }
-        chunks.push(normalized);
-        seen.add(normalized);
-      };
+      const baseText = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
+      if (baseText) {
+        chunks.push(baseText);
+        seen[baseText] = true;
+      }
 
-      pushChunk(document.title);
-      pushChunk(document.querySelector("meta[name='description']")?.getAttribute("content") ?? "");
+      const titleText = (document.title ?? "").replace(/\s+/g, " ").trim();
+      if (titleText && !seen[titleText]) {
+        chunks.push(titleText);
+        seen[titleText] = true;
+      }
 
-      const root = document.body ?? document.documentElement;
-      if (root) {
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-          acceptNode(node) {
-            const parent = node.parentElement;
-            if (!parent) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            const tag = parent.tagName;
-            if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEMPLATE") {
-              return NodeFilter.FILTER_REJECT;
-            }
-            if (!(node.textContent ?? "").trim()) {
-              return NodeFilter.FILTER_REJECT;
-            }
-            return NodeFilter.FILTER_ACCEPT;
-          },
-        });
-        while (walker.nextNode()) {
-          pushChunk(walker.currentNode.textContent);
-        }
+      const metaDesc = (document.querySelector("meta[name='description']")?.getAttribute("content") ?? "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (metaDesc && !seen[metaDesc]) {
+        chunks.push(metaDesc);
+        seen[metaDesc] = true;
       }
 
       const semanticNodes = document.querySelectorAll<HTMLElement>(
         "[aria-label], [alt], [title], input, textarea, button, a, [role='button']",
       );
-      semanticNodes.forEach((node) => {
-        pushChunk(node.getAttribute("aria-label"));
-        pushChunk(node.getAttribute("alt"));
-        pushChunk(node.getAttribute("title"));
+      for (let i = 0; i < semanticNodes.length; i += 1) {
+        const node = semanticNodes[i];
+        const candidates = [
+          node.getAttribute("aria-label") ?? "",
+          node.getAttribute("alt") ?? "",
+          node.getAttribute("title") ?? "",
+        ];
         if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
-          pushChunk(node.placeholder);
-          pushChunk(node.value);
+          candidates.push(node.placeholder ?? "", node.value ?? "");
         }
-      });
+        for (let j = 0; j < candidates.length; j += 1) {
+          const normalized = candidates[j].replace(/\s+/g, " ").trim();
+          if (!normalized || seen[normalized]) {
+            continue;
+          }
+          chunks.push(normalized);
+          seen[normalized] = true;
+        }
+      }
 
       return chunks.join("\n");
     }),
