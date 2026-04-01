@@ -41,6 +41,8 @@ export type BrowserActionType =
 export interface BrowserAction {
   type: BrowserActionType;
   selector?: string;
+  x?: number;
+  y?: number;
   text?: string;
   url?: string;
   waitMs?: number;
@@ -60,6 +62,7 @@ export interface ScrapeResult {
   pageTitle?: string;
   extractedData?: Record<string, unknown>;
   rawText?: string;
+  rawHtml?: string;
   sourceUrl?: string;
   summary?: string;
   transcript?: string;

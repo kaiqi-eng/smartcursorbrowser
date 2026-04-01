@@ -80,7 +80,7 @@ All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
 
 `GET /jobs/:id/result` includes both raw and structured extraction:
 
-- `rawText`: captured text from the page
+- `rawText`: comprehensive text extracted from page content
 - `parsedPosts`: AI-parsed array with minimal rewriting
 
 Example:

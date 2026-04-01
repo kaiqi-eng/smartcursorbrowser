@@ -7,7 +7,7 @@
     <style>
       body { margin: 0; font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; }
       .container { display: grid; grid-template-columns: 360px 1fr; gap: 16px; padding: 16px; }
-      .panel { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 14px; }
+      .panel { background: #111827; border: 1px solid #1f2937; border-radius: 10px; padding: 14px; min-width: 0; }
       h1 { margin: 0 0 12px 0; font-size: 20px; }
       h2 { margin: 0 0 10px 0; font-size: 16px; }
       label { display: block; font-size: 12px; margin-top: 10px; margin-bottom: 6px; color: #9ca3af; }
@@ -19,6 +19,8 @@
       .statusLine { font-size: 13px; margin-top: 8px; color: #93c5fd; white-space: pre-wrap; }
       .meta { font-size: 12px; color: #9ca3af; }
       img {
+        display: block;
+        max-width: 100%;
         width: 100%;
         height: clamp(260px, 52vh, 520px);
         background: #020617;

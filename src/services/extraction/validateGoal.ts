@@ -3,6 +3,19 @@ import type { ScrapeResult } from "../../types/job";
 import { getOpenAIClient } from "../ai/openaiClient";
 
 type GoalAssessment = NonNullable<ScrapeResult["goalAssessment"]>;
+const VALIDATION_HTML_MAX_CHARS = 100000;
+const VALIDATION_TEXT_MAX_CHARS = 12000;
+
+function makeHeadTailSnippet(content: string, maxChars: number): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+  const separator = "\n... middle truncated ...\n";
+  const budget = Math.max(0, maxChars - separator.length);
+  const headSize = Math.floor(budget / 2);
+  const tailSize = budget - headSize;
+  return `${content.slice(0, headSize)}${separator}${content.slice(-tailSize)}`;
+}
 
 function normalizeAssessment(value: unknown): GoalAssessment | undefined {
   if (!value || typeof value !== "object") {
@@ -36,6 +49,7 @@ export async function validateGoalAgainstExtraction(params: {
   finalUrl: string;
   pageTitle: string;
   rawText: string;
+  rawHtml?: string;
   parsedPosts: Array<{ title: string; content: string }>;
   extractedData?: Record<string, unknown>;
 }): Promise<GoalAssessment | undefined> {
@@ -60,7 +74,8 @@ export async function validateGoalAgainstExtraction(params: {
               goal: params.goal,
               finalUrl: params.finalUrl,
               pageTitle: params.pageTitle,
-              rawText: params.rawText.slice(0, 6000),
+              rawText: makeHeadTailSnippet(params.rawText, VALIDATION_TEXT_MAX_CHARS),
+              rawHtml: makeHeadTailSnippet(params.rawHtml ?? "", VALIDATION_HTML_MAX_CHARS),
               parsedPosts: params.parsedPosts.slice(0, 20),
               extractedData: params.extractedData ?? {},
               instructions: {

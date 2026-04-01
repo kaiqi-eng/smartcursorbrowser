@@ -4,6 +4,30 @@ import type { BrowserAction, LoginFieldInput } from "../../types/job";
 const MAX_WAIT_MS = 10000;
 const MAX_SCROLL_BY = 4000;
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+async function clampClickCoordinates(page: Page, x: number, y: number): Promise<{ x: number; y: number }> {
+  const viewport = page.viewportSize();
+  if (viewport) {
+    return {
+      x: clamp(Math.round(x), 0, Math.max(0, viewport.width - 1)),
+      y: clamp(Math.round(y), 0, Math.max(0, viewport.height - 1)),
+    };
+  }
+
+  const dimensions = await page.evaluate(() => ({
+    width: window.innerWidth || document.documentElement.clientWidth || 0,
+    height: window.innerHeight || document.documentElement.clientHeight || 0,
+  }));
+
+  return {
+    x: clamp(Math.round(x), 0, Math.max(0, dimensions.width - 1)),
+    y: clamp(Math.round(y), 0, Math.max(0, dimensions.height - 1)),
+  };
+}
+
 function normalizeSelector(selector: string): string {
   // Convert jQuery-style selectors to Playwright-friendly text selectors.
   return selector
@@ -78,12 +102,18 @@ export async function executeBrowserAction(
       return;
     }
     case "click": {
-      if (!action.selector) {
-        throw new Error("Action 'click' requires a selector");
+      const hasCoordinates = Number.isFinite(action.x) && Number.isFinite(action.y);
+      if (hasCoordinates) {
+        const coords = await clampClickCoordinates(page, action.x as number, action.y as number);
+        await page.mouse.click(coords.x, coords.y);
+        return;
       }
-      const selector = normalizeSelector(action.selector);
-      await clickWithLoginFallback(page, selector);
-      return;
+      if (action.selector) {
+        const selector = normalizeSelector(action.selector);
+        await clickWithLoginFallback(page, selector);
+        return;
+      }
+      throw new Error("Action 'click' requires coordinates (x and y) or a selector");
     }
     case "type": {
       if (!action.selector) {

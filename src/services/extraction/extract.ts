@@ -5,6 +5,9 @@ import { extractOtterSummaryAndTranscript } from "./otterExtract";
 import { validateGoalAgainstExtraction } from "./validateGoal";
 
 const EXTRACTION_RETRIES = 3;
+const FINAL_SCROLL_ITERATIONS = 35;
+const FINAL_SCROLL_PAUSE_MS = 550;
+const FINAL_SCROLL_STEP_PX = 900;
 
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -38,6 +41,162 @@ function asRecordOrUndefined(value: unknown): Record<string, unknown> | undefine
   return undefined;
 }
 
+async function collectFinalPageSnapshot(page: Page): Promise<{ rawText: string }> {
+  let stagnantTicks = 0;
+  for (let i = 0; i < FINAL_SCROLL_ITERATIONS; i += 1) {
+    const before = await withContextRetry(page, () =>
+      page.evaluate(() => {
+        const root = document.documentElement;
+        const body = document.body;
+        const pageHeight = Math.max(root?.scrollHeight ?? 0, body?.scrollHeight ?? 0);
+        const pageY = Math.max(window.scrollY, root?.scrollTop ?? 0, body?.scrollTop ?? 0);
+        const scrollables = Array.from(document.querySelectorAll<HTMLElement>("*"))
+          .filter((el) => {
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            return (
+              (overflowY === "auto" || overflowY === "scroll") &&
+              el.scrollHeight > el.clientHeight + 20 &&
+              el.clientHeight > 80
+            );
+          })
+          .sort((a, b) => b.clientHeight - a.clientHeight);
+        const primaryScrollable = scrollables[0];
+        return {
+          pageHeight,
+          pageY,
+          containerTop: primaryScrollable?.scrollTop ?? 0,
+          containerHeight: primaryScrollable?.scrollHeight ?? 0,
+        };
+      }),
+    );
+
+    await page.mouse.wheel(0, FINAL_SCROLL_STEP_PX);
+    await withContextRetry(page, () =>
+      page.evaluate(() => {
+        window.scrollBy(0, 900);
+        const scrollables = Array.from(document.querySelectorAll<HTMLElement>("*"))
+          .filter((el) => {
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            return (
+              (overflowY === "auto" || overflowY === "scroll") &&
+              el.scrollHeight > el.clientHeight + 20 &&
+              el.clientHeight > 80
+            );
+          })
+          .sort((a, b) => b.clientHeight - a.clientHeight);
+        const primaryScrollable = scrollables[0];
+        if (primaryScrollable) {
+          primaryScrollable.scrollBy({ top: 900, behavior: "auto" });
+        }
+      }),
+    );
+    await page.keyboard.press("PageDown");
+    await page.waitForTimeout(FINAL_SCROLL_PAUSE_MS);
+    const after = await withContextRetry(page, () =>
+      page.evaluate(() => {
+        const root = document.documentElement;
+        const body = document.body;
+        const pageHeight = Math.max(root?.scrollHeight ?? 0, body?.scrollHeight ?? 0);
+        const pageY = Math.max(window.scrollY, root?.scrollTop ?? 0, body?.scrollTop ?? 0);
+        const scrollables = Array.from(document.querySelectorAll<HTMLElement>("*"))
+          .filter((el) => {
+            const style = window.getComputedStyle(el);
+            const overflowY = style.overflowY;
+            return (
+              (overflowY === "auto" || overflowY === "scroll") &&
+              el.scrollHeight > el.clientHeight + 20 &&
+              el.clientHeight > 80
+            );
+          })
+          .sort((a, b) => b.clientHeight - a.clientHeight);
+        const primaryScrollable = scrollables[0];
+        return {
+          pageHeight,
+          pageY,
+          containerTop: primaryScrollable?.scrollTop ?? 0,
+          containerHeight: primaryScrollable?.scrollHeight ?? 0,
+        };
+      }),
+    );
+
+    const progressed =
+      after.pageY > before.pageY + 2 ||
+      after.pageHeight > before.pageHeight + 8 ||
+      after.containerTop > before.containerTop + 2 ||
+      after.containerHeight > before.containerHeight + 8;
+
+    if (!progressed) {
+      stagnantTicks += 1;
+    } else {
+      stagnantTicks = 0;
+    }
+
+    if (stagnantTicks >= 4) {
+      break;
+    }
+  }
+
+  const rawText = await withContextRetry(page, () =>
+    page.evaluate(() => {
+      const chunks: string[] = [];
+      const seen = new Set<string>();
+
+      const pushChunk = (value: string | null | undefined): void => {
+        const normalized = (value ?? "").replace(/\s+/g, " ").trim();
+        if (!normalized || seen.has(normalized)) {
+          return;
+        }
+        chunks.push(normalized);
+        seen.add(normalized);
+      };
+
+      pushChunk(document.title);
+      pushChunk(document.querySelector("meta[name='description']")?.getAttribute("content") ?? "");
+
+      const root = document.body ?? document.documentElement;
+      if (root) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            const parent = node.parentElement;
+            if (!parent) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            const tag = parent.tagName;
+            if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT" || tag === "TEMPLATE") {
+              return NodeFilter.FILTER_REJECT;
+            }
+            if (!(node.textContent ?? "").trim()) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          },
+        });
+        while (walker.nextNode()) {
+          pushChunk(walker.currentNode.textContent);
+        }
+      }
+
+      const semanticNodes = document.querySelectorAll<HTMLElement>(
+        "[aria-label], [alt], [title], input, textarea, button, a, [role='button']",
+      );
+      semanticNodes.forEach((node) => {
+        pushChunk(node.getAttribute("aria-label"));
+        pushChunk(node.getAttribute("alt"));
+        pushChunk(node.getAttribute("title"));
+        if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+          pushChunk(node.placeholder);
+          pushChunk(node.value);
+        }
+      });
+
+      return chunks.join("\n");
+    }),
+  );
+  return { rawText };
+}
+
 export async function extractResult(
   page: Page,
   trace: JobTraceEvent[],
@@ -67,7 +226,17 @@ export async function extractResult(
     };
   }
 
-  const rawText = await withContextRetry(page, () => page.evaluate(() => document.body?.innerText?.slice(0, 8000) ?? ""));
+  const { rawText } = await collectFinalPageSnapshot(page);
+  trace.push({
+    timestamp: new Date().toISOString(),
+    step: trace.length > 0 ? trace[trace.length - 1].step : 0,
+    action: {
+      type: "scroll",
+      scrollBy: 0,
+      reason: "Performed final extraction scroll pass and captured comprehensive text snapshot.",
+    },
+    note: "Final extraction uses auto-scroll and text-first capture.",
+  });
 
   let extractedData: Record<string, unknown> | undefined;
   if (extractionSchema) {

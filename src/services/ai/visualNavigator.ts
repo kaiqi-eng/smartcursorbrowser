@@ -7,7 +7,9 @@ const SYSTEM_PROMPT = `You are a browser automation agent. Your only output must
 REQUIRED JSON shape:
 {
   "type": "<one of: goto | click | type | wait | scroll | extract | done>",
-  "selector": "<CSS selector string, only for click/type>",
+  "selector": "<CSS selector string, only for click/type when needed>",
+  "x": <x coordinate integer, only for click>,
+  "y": <y coordinate integer, only for click>,
   "text": "<text to type or credential token like {{username}}, only for type>",
   "url": "<full URL, only for goto>",
   "waitMs": <milliseconds integer, only for wait>,
@@ -18,7 +20,9 @@ REQUIRED JSON shape:
 RULES:
 - Output ONLY the JSON object. No prose before or after.
 - Every response must include "type" and "reason". All other keys are optional and only needed for the chosen type.
-- For click/type, prefer stable selectors: id (#id), data attributes ([data-testid="x"]), or aria ([aria-label="x"]) over fragile nth-child or class chains.
+- For click actions, prioritize image-driven coordinate clicks: provide "x" and "y" first whenever possible.
+- Use selector-based click only when coordinates are uncertain or clearly unsafe.
+- For type actions, prefer stable selectors: id (#id), data attributes ([data-testid="x"]), or aria ([aria-label="x"]) over fragile nth-child or class chains.
 - If the last action failed, pick a different selector strategy entirely — never repeat the same failing selector.
 - Use {{field_name}} tokens to reference login credentials, never hard-code secrets.
 - If the page has fully loaded and the goal is achieved, return {"type":"done","reason":"Goal complete."}.
@@ -35,6 +39,8 @@ function toAction(jsonText: string): BrowserAction {
   return {
     type: parsed.type,
     selector: parsed.selector,
+    x: parsed.x,
+    y: parsed.y,
     text: parsed.text,
     url: parsed.url,
     waitMs: parsed.waitMs,
