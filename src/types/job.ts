@@ -1,4 +1,10 @@
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "paused_for_verification"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 
 export interface LoginFieldInput {
   name: string;

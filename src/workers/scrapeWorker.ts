@@ -4,7 +4,6 @@ import { executeBrowserAction } from "../services/browser/actions";
 import {
   attemptDeterministicLogin,
   isLikelyLoggedIn,
-  isLikelyLoginPage,
   navigateToLoginEntry,
 } from "../services/browser/loginFlow";
 import { performOtterLoginFlow } from "../services/browser/otterFlow";
@@ -33,6 +32,7 @@ async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserS
   pageTitle: string;
 }> {
   let lastError: unknown;
+
   for (let attempt = 1; attempt <= SNAPSHOT_RETRIES; attempt += 1) {
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
@@ -52,6 +52,7 @@ async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserS
       await page.waitForTimeout(350);
     }
   }
+
   throw lastError instanceof Error ? lastError : new Error("Failed to capture page context");
 }
 
@@ -68,18 +69,23 @@ export function createScrapeWorker(jobStore: JobStore) {
     const trace: JobTraceEvent[] = [];
     let carryOverError: string | undefined;
     let goalSatisfiedEarly = false;
+
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
+
     try {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
+
       if (job.request.sourceType === "otter") {
         if ((job.request.loginFields?.length ?? 0) === 0) {
           throw new Error("Otter jobs require login credentials");
         }
+
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
         await performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []);
+
         const result = await extractResult(
           session.page,
           trace,
@@ -87,7 +93,9 @@ export function createScrapeWorker(jobStore: JobStore) {
           job.request.goal,
           "otter",
         );
+
         jobStore.setResult(jobId, result);
+
         if (!result.goalAssessment?.meetsGoal) {
           jobStore.setError(
             jobId,
@@ -96,9 +104,11 @@ export function createScrapeWorker(jobStore: JobStore) {
           jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
           return;
         }
+
         jobStore.updateStatus(jobId, "succeeded", "Otter transcript extraction completed");
         return;
       }
+
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
         if (!loggedIn) {
@@ -109,11 +119,13 @@ export function createScrapeWorker(jobStore: JobStore) {
           }
         }
       }
+
       for (let step = 1; step <= maxSteps; step += 1) {
         const currentJob = jobStore.get(jobId);
         if (!currentJob) {
           throw new Error("Job disappeared from store");
         }
+
         if (currentJob.cancelRequested) {
           jobStore.updateStatus(jobId, "cancelled", "Cancelled by request");
           return;
@@ -122,8 +134,10 @@ export function createScrapeWorker(jobStore: JobStore) {
         let shouldEnd = false;
         let retryError: string | undefined = carryOverError;
         let stepExecutionFailed = false;
+
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
           const stepContext = await captureStepContext(session.page);
+
           const context: ActionContext = {
             step,
             goal: job.request.goal,
@@ -138,6 +152,7 @@ export function createScrapeWorker(jobStore: JobStore) {
               secret: field.secret ?? false,
             })),
           };
+
           jobStore.updateLiveView(jobId, {
             currentUrl: context.currentUrl,
             pageTitle: context.pageTitle,
@@ -146,11 +161,13 @@ export function createScrapeWorker(jobStore: JobStore) {
 
           let action = await getNextAction(context, trace);
           const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
+
           if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
             const loggedIn = await isLikelyLoggedIn(session.page);
             if (!loggedIn) {
               await navigateToLoginEntry(session.page);
               const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+
               action = loginAttempted
                 ? {
                     type: "wait",
@@ -166,12 +183,14 @@ export function createScrapeWorker(jobStore: JobStore) {
           }
 
           const note = action.reason ?? "No reason provided";
+
           trace.push({
             timestamp: new Date().toISOString(),
             step,
             action,
             note: `[attempt ${attempt}] ${note}`,
           });
+
           jobStore.updateProgress(jobId, step, `${action.type}: ${note}`);
 
           if (shouldStop(action, step, maxSteps, startedAtMs, timeoutMs)) {
@@ -225,9 +244,11 @@ export function createScrapeWorker(jobStore: JobStore) {
               step,
               `Retrying action after error (${attempt}/${MAX_ACTION_RETRIES}): ${retryError}`,
             );
+
             if (attempt === MAX_ACTION_RETRIES) {
               carryOverError = retryError;
               stepExecutionFailed = true;
+
               trace.push({
                 timestamp: new Date().toISOString(),
                 step,
@@ -238,6 +259,7 @@ export function createScrapeWorker(jobStore: JobStore) {
                 },
                 note: `Step execution failed after ${MAX_ACTION_RETRIES} attempts: ${retryError}`,
               });
+
               jobStore.updateProgress(
                 jobId,
                 step,
@@ -251,6 +273,7 @@ export function createScrapeWorker(jobStore: JobStore) {
         if (shouldEnd) {
           break;
         }
+
         if (stepExecutionFailed) {
           continue;
         }
@@ -266,7 +289,9 @@ export function createScrapeWorker(jobStore: JobStore) {
           job.request.goal,
           job.request.sourceType ?? "generic",
         );
+
         jobStore.setResult(jobId, result);
+
         if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
           jobStore.setError(
             jobId,

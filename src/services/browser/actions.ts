@@ -8,6 +8,10 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function randomDelay(min = 150, max = 500): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
 async function clampClickCoordinates(page: Page, x: number, y: number): Promise<{ x: number; y: number }> {
   const viewport = page.viewportSize();
   if (viewport) {
@@ -29,7 +33,6 @@ async function clampClickCoordinates(page: Page, x: number, y: number): Promise<
 }
 
 function normalizeSelector(selector: string): string {
-  // Convert jQuery-style selectors to Playwright-friendly text selectors.
   return selector
     .replace(/:contains\("([^"]+)"\)/g, ':has-text("$1")')
     .replace(/:contains\('([^']+)'\)/g, ':has-text("$1")');
@@ -54,7 +57,9 @@ function isLoginishSelector(selector: string): boolean {
 
 async function clickWithLoginFallback(page: Page, selector: string): Promise<void> {
   try {
-    await page.click(selector);
+    const locator = page.locator(selector).first();
+    await locator.scrollIntoViewIfNeeded().catch(() => {});
+    await locator.click({ timeout: 5000 });
     return;
   } catch (error) {
     if (!isLoginishSelector(selector)) {
@@ -78,6 +83,7 @@ async function clickWithLoginFallback(page: Page, selector: string): Promise<voi
       continue;
     }
     try {
+      await locator.scrollIntoViewIfNeeded().catch(() => {});
       await locator.click({ timeout: 3000 });
       return;
     } catch {
@@ -99,49 +105,68 @@ export async function executeBrowserAction(
         throw new Error("Action 'goto' requires a url");
       }
       await page.goto(action.url, { waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(randomDelay());
       return;
     }
+
     case "click": {
       const hasCoordinates = Number.isFinite(action.x) && Number.isFinite(action.y);
+
       if (hasCoordinates) {
         const coords = await clampClickCoordinates(page, action.x as number, action.y as number);
         await page.mouse.click(coords.x, coords.y);
+        await page.waitForTimeout(randomDelay());
         return;
       }
+
       if (action.selector) {
         const selector = normalizeSelector(action.selector);
         await clickWithLoginFallback(page, selector);
+        await page.waitForTimeout(randomDelay());
         return;
       }
+
       throw new Error("Action 'click' requires coordinates (x and y) or a selector");
     }
+
     case "type": {
       if (!action.selector) {
         throw new Error("Action 'type' requires a selector");
       }
+
       const selector = normalizeSelector(action.selector);
       const value = resolveLoginValue(action, loginFields);
+
       if (value === undefined) {
         throw new Error("Action 'type' requires text or credential token");
       }
-      await page.fill(selector, value);
+
+      const locator = page.locator(selector).first();
+      await locator.click({ timeout: 5000 });
+      await locator.fill("");
+      await locator.type(value, { delay: 25 });
+      await page.waitForTimeout(randomDelay(100, 300));
       return;
     }
+
     case "wait": {
       const waitMs = Math.min(Math.max(100, action.waitMs ?? 1000), MAX_WAIT_MS);
       await page.waitForTimeout(waitMs);
       return;
     }
+
     case "scroll": {
       const scrollBy = Math.min(Math.max(-MAX_SCROLL_BY, action.scrollBy ?? 800), MAX_SCROLL_BY);
       await page.mouse.wheel(0, scrollBy);
-      await page.waitForTimeout(250);
+      await page.waitForTimeout(randomDelay(150, 400));
       return;
     }
+
     case "extract":
     case "done": {
       return;
     }
+
     default:
       throw new Error(`Unsupported action type: ${(action as BrowserAction).type}`);
   }

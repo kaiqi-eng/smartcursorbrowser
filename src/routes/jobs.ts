@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
+import { env } from "../config/env";
 import type { RuntimeServices } from "../services/runtime";
 import { redactLoginFields } from "../services/security/redaction";
 import type { JobRecord, JobSummary } from "../types/job";
@@ -17,12 +18,34 @@ function toSummary(job: JobRecord): JobSummary {
   };
 }
 
+function isAllowedUrl(url: string): boolean {
+  if (env.allowedDomains.length === 0) {
+    return true;
+  }
+
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return env.allowedDomains.some((domain) => {
+      const normalized = domain.toLowerCase();
+      return hostname === normalized || hostname.endsWith(`.${normalized}`);
+    });
+  } catch {
+    return false;
+  }
+}
+
 export function createJobsRouter(runtime: RuntimeServices): Router {
   const router = Router();
 
   router.post("/otter-transcript", (req, res) => {
     try {
       const payload = validateOtterTranscriptRequest(req.body);
+
+      if (!isAllowedUrl(payload.url)) {
+        res.status(403).json({ error: "Target URL domain is not allowed" });
+        return;
+      }
+
       const now = new Date().toISOString();
       const id = uuidv4();
       const job: JobRecord = {
@@ -49,6 +72,7 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
         },
         cancelRequested: false,
       };
+
       runtime.jobStore.create(job);
       runtime.jobQueue.enqueue(id);
 
@@ -73,6 +97,12 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
   router.post("/", (req, res) => {
     try {
       const payload = validateScrapeJobRequest(req.body);
+
+      if (!isAllowedUrl(payload.url)) {
+        res.status(403).json({ error: "Target URL domain is not allowed" });
+        return;
+      }
+
       const now = new Date().toISOString();
       const id = uuidv4();
       const job: JobRecord = {
@@ -88,6 +118,7 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
         },
         cancelRequested: false,
       };
+
       runtime.jobStore.create(job);
       runtime.jobQueue.enqueue(id);
 

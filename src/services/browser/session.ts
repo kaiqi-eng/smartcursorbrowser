@@ -1,4 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import { env } from "../../config/env";
 
 export interface BrowserSession {
   browser: Browser;
@@ -7,13 +8,19 @@ export interface BrowserSession {
 }
 
 export async function createBrowserSession(userAgent?: string): Promise<BrowserSession> {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: env.browserHeadless,
+    args: ["--no-sandbox", "--disable-dev-shm-usage"],
+  });
+
   const context = await browser.newContext({
     userAgent,
     acceptDownloads: false,
   });
+
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
+
   return { browser, context, page };
 }
 
