@@ -16,6 +16,7 @@ import type { ActionContext, JobTraceEvent } from "../types/job";
 
 const MAX_ACTION_RETRIES = 3;
 const SNAPSHOT_RETRIES = 3;
+const MAX_TEMP_RESTRICTED_DONE_RETRIES = 3;
 
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -25,8 +26,43 @@ function isTransientContextError(error: unknown): boolean {
   return message.includes("execution context was destroyed") || message.includes("cannot find context");
 }
 
-async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserSession>>["page"]): Promise<{
-  screenshotBase64: string;
+function shouldCaptureScreenshot(step: number, retryError?: string): boolean {
+  if (step === 1) {
+    return true;
+  }
+
+  if (retryError) {
+    return true;
+  }
+
+  return step % env.screenshotEveryNSteps === 0;
+}
+
+function pushTrace(trace: JobTraceEvent[], event: JobTraceEvent): void {
+  trace.push(event);
+  if (trace.length > env.maxTraceEvents) {
+    trace.shift();
+  }
+}
+
+function isTemporaryRestrictedDoneAction(action: { type: string; reason?: string }): boolean {
+  if (action.type !== "done") {
+    return false;
+  }
+
+  const reason = (action.reason ?? "").toLowerCase();
+
+  return (
+    reason.includes("access is temporarily restricted") ||
+    reason.includes("temporarily restricted")
+  );
+}
+
+async function captureStepContext(
+  page: Awaited<ReturnType<typeof createBrowserSession>>["page"],
+  includeScreenshot = false,
+): Promise<{
+  screenshotBase64?: string;
   textSnapshot: string;
   currentUrl: string;
   pageTitle: string;
@@ -36,10 +72,15 @@ async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserS
   for (let attempt = 1; attempt <= SNAPSHOT_RETRIES; attempt += 1) {
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
-      const screenshot = await page.screenshot({ type: "png", fullPage: false });
-      const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 3500) ?? "");
+
+      const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 2500) ?? "");
+
+      const screenshotBase64 = includeScreenshot
+        ? (await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })).toString("base64")
+        : undefined;
+
       return {
-        screenshotBase64: screenshot.toString("base64"),
+        screenshotBase64,
         textSnapshot,
         currentUrl: page.url(),
         pageTitle: await page.title(),
@@ -69,6 +110,7 @@ export function createScrapeWorker(jobStore: JobStore) {
     const trace: JobTraceEvent[] = [];
     let carryOverError: string | undefined;
     let goalSatisfiedEarly = false;
+    let tempRestrictedDoneCount = 0;
 
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
@@ -112,31 +154,26 @@ export function createScrapeWorker(jobStore: JobStore) {
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
         if (!loggedIn) {
-          const movedToLogin = await navigateToLoginEntry(session.page);
-          if (movedToLogin) {
-            jobStore.updateProgress(jobId, 0, "Navigated from home page to login entry");
-            await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
-          }
+          jobStore.updateProgress(jobId, 0, "Attempting login");
+          await navigateToLoginEntry(session.page);
+          await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
         }
       }
 
       for (let step = 1; step <= maxSteps; step += 1) {
-        const currentJob = jobStore.get(jobId);
-        if (!currentJob) {
-          throw new Error("Job disappeared from store");
-        }
-
-        if (currentJob.cancelRequested) {
-          jobStore.updateStatus(jobId, "cancelled", "Cancelled by request");
+        const latestJob = jobStore.get(jobId);
+        if (!latestJob || latestJob.cancelRequested) {
+          jobStore.updateStatus(jobId, "cancelled", "Job cancelled");
           return;
         }
 
         let shouldEnd = false;
-        let retryError: string | undefined = carryOverError;
         let stepExecutionFailed = false;
+        let retryError = carryOverError;
 
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
-          const stepContext = await captureStepContext(session.page);
+          const includeScreenshot = shouldCaptureScreenshot(step, retryError);
+          const stepContext = await captureStepContext(session.page, includeScreenshot);
 
           const context: ActionContext = {
             step,
@@ -156,7 +193,7 @@ export function createScrapeWorker(jobStore: JobStore) {
           jobStore.updateLiveView(jobId, {
             currentUrl: context.currentUrl,
             pageTitle: context.pageTitle,
-            screenshotBase64: context.screenshotBase64,
+            screenshotBase64: env.enableLiveScreenshots ? context.screenshotBase64 : undefined,
           });
 
           let action = await getNextAction(context, trace);
@@ -182,9 +219,43 @@ export function createScrapeWorker(jobStore: JobStore) {
             }
           }
 
+          // NEW: Handle "Access is temporarily restricted" done action up to 3 times only
+          if (isTemporaryRestrictedDoneAction(action)) {
+            tempRestrictedDoneCount += 1;
+
+            pushTrace(trace, {
+              timestamp: new Date().toISOString(),
+              step,
+              action,
+              note: `Temporary restricted done detected (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES})`,
+            });
+
+            if (tempRestrictedDoneCount < MAX_TEMP_RESTRICTED_DONE_RETRIES) {
+              carryOverError = `Access temporarily restricted detected (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES}). Retrying with alternate approach.`;
+
+              jobStore.updateProgress(
+                jobId,
+                step,
+                `Access temporarily restricted (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES}). Retrying...`,
+              );
+
+              // wait a little and continue to next step instead of ending
+              await session.page.waitForTimeout(2000);
+              stepExecutionFailed = true;
+              break;
+            }
+
+            jobStore.setError(
+              jobId,
+              "Access is temporarily restricted, cannot proceed further after 3 retries",
+            );
+            jobStore.updateStatus(jobId, "failed", "Access temporarily restricted after 3 retries");
+            return;
+          }
+
           const note = action.reason ?? "No reason provided";
 
-          trace.push({
+          pushTrace(trace, {
             timestamp: new Date().toISOString(),
             step,
             action,
@@ -239,6 +310,7 @@ export function createScrapeWorker(jobStore: JobStore) {
             break;
           } catch (error) {
             retryError = maskError(error);
+
             jobStore.updateProgress(
               jobId,
               step,
@@ -249,7 +321,7 @@ export function createScrapeWorker(jobStore: JobStore) {
               carryOverError = retryError;
               stepExecutionFailed = true;
 
-              trace.push({
+              pushTrace(trace, {
                 timestamp: new Date().toISOString(),
                 step,
                 action: {
@@ -265,6 +337,7 @@ export function createScrapeWorker(jobStore: JobStore) {
                 step,
                 `Action failed after ${MAX_ACTION_RETRIES} attempts; continuing with next AI step`,
               );
+
               break;
             }
           }

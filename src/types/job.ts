@@ -28,7 +28,7 @@ export interface ActionContext {
   step: number;
   currentUrl: string;
   pageTitle: string;
-  screenshotBase64: string;
+  screenshotBase64?: string; // changed to optional (safe)
   textSnapshot: string;
   goal: string;
   lastError?: string;

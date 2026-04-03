@@ -82,4 +82,18 @@ export class JobStore {
     job.progress.message = "Cancellation requested";
     return job;
   }
+
+  // New: cleanup old finished jobs to avoid memory buildup
+  cleanup(maxAgeMs = 10 * 60 * 1000): void {
+    const now = Date.now();
+
+    for (const [id, job] of this.jobs.entries()) {
+      const updatedAt = new Date(job.updatedAt).getTime();
+      const finished = ["succeeded", "failed", "cancelled"].includes(job.status);
+
+      if (finished && now - updatedAt > maxAgeMs) {
+        this.jobs.delete(id);
+      }
+    }
+  }
 }
