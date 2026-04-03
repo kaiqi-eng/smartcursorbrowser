@@ -45,6 +45,19 @@ export class JobStore {
       return undefined;
     }
     job.result = result;
+    if (result.validationPayload) {
+      job.latestValidationPayload = result.validationPayload;
+    }
+    job.updatedAt = new Date().toISOString();
+    return job;
+  }
+
+  setValidationPayload(id: string, payload: ScrapeResult["validationPayload"]): JobRecord | undefined {
+    const job = this.jobs.get(id);
+    if (!job || !payload) {
+      return undefined;
+    }
+    job.latestValidationPayload = payload;
     job.updatedAt = new Date().toISOString();
     return job;
   }

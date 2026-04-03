@@ -95,19 +95,33 @@ export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
     return false;
   }
 
-  const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 2000) ?? "")).toLowerCase();
-  const hasAuthPrompt = text.includes("sign in") || text.includes("log in") || text.includes("login");
+  const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 8000) ?? "")).toLowerCase();
+  const hasStrongAuthPrompt =
+    text.includes("sign in to continue") ||
+    text.includes("log in to continue") ||
+    text.includes("forgot password") ||
+    text.includes("enter your password") ||
+    text.includes("use your email");
   const hasLoggedInCue =
     text.includes("sign out") ||
     text.includes("logout") ||
     text.includes("my account") ||
     text.includes("profile") ||
     text.includes("dashboard");
+  const hasFeedCue =
+    text.includes("bookmarks") ||
+    text.includes("latest") ||
+    text.includes("trending") ||
+    text.includes("ask ai") ||
+    text.includes("user profile");
 
   if (hasLoggedInCue) {
     return true;
   }
-  if (hasAuthPrompt) {
+  if (hasFeedCue) {
+    return true;
+  }
+  if (hasStrongAuthPrompt) {
     return false;
   }
   return true;

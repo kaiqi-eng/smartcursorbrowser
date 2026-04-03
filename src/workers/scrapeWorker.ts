@@ -68,6 +68,8 @@ export function createScrapeWorker(jobStore: JobStore) {
     const trace: JobTraceEvent[] = [];
     let carryOverError: string | undefined;
     let goalSatisfiedEarly = false;
+    let validationRetryStreak = 0;
+    let confirmedLoggedIn = false;
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
@@ -101,11 +103,18 @@ export function createScrapeWorker(jobStore: JobStore) {
       }
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
+        if (loggedIn) {
+          confirmedLoggedIn = true;
+        }
         if (!loggedIn) {
           const movedToLogin = await navigateToLoginEntry(session.page);
           if (movedToLogin) {
             jobStore.updateProgress(jobId, 0, "Navigated from home page to login entry");
-            await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+            const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+            if (loginAttempted) {
+              await session.page.waitForTimeout(1200);
+              confirmedLoggedIn = await isLikelyLoggedIn(session.page);
+            }
           }
         }
       }
@@ -132,11 +141,13 @@ export function createScrapeWorker(jobStore: JobStore) {
             screenshotBase64: stepContext.screenshotBase64,
             textSnapshot: stepContext.textSnapshot,
             lastError: retryError,
-            loginFieldHints: (job.request.loginFields ?? []).map((field) => ({
-              name: field.name,
-              selector: field.selector,
-              secret: field.secret ?? false,
-            })),
+            loginFieldHints: confirmedLoggedIn
+              ? []
+              : (job.request.loginFields ?? []).map((field) => ({
+                  name: field.name,
+                  selector: field.selector,
+                  secret: field.secret ?? false,
+                })),
           };
           jobStore.updateLiveView(jobId, {
             currentUrl: context.currentUrl,
@@ -147,22 +158,36 @@ export function createScrapeWorker(jobStore: JobStore) {
           let action = await getNextAction(context, trace);
           const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
           if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
-            const loggedIn = await isLikelyLoggedIn(session.page);
-            if (!loggedIn) {
-              await navigateToLoginEntry(session.page);
-              const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
-              action = loginAttempted
-                ? {
-                    type: "wait",
-                    waitMs: 1200,
-                    reason: "Detected login page; performed deterministic credential submit before continuing.",
-                  }
-                : {
-                    type: "scroll",
-                    scrollBy: 500,
-                    reason: "Detected login page; bypassing early stop to continue login discovery.",
-                  };
+            if (!confirmedLoggedIn) {
+              const loggedIn = await isLikelyLoggedIn(session.page);
+              if (loggedIn) {
+                confirmedLoggedIn = true;
+              } else {
+                const onLoginPage = await isLikelyLoginPage(session.page);
+                if (onLoginPage) {
+                  await navigateToLoginEntry(session.page);
+                  const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+                  action = loginAttempted
+                    ? {
+                        type: "wait",
+                        waitMs: 1200,
+                        reason: "Detected login page; performed deterministic credential submit before continuing.",
+                      }
+                    : {
+                        type: "scroll",
+                        scrollBy: 500,
+                        reason: "Detected login page; bypassing early stop to continue login discovery.",
+                      };
+                }
+              }
             }
+          }
+          if (validationRetryStreak > 0 && (action.type === "done" || action.type === "extract")) {
+            action = {
+              type: "scroll",
+              scrollBy: 900,
+              reason: `Goal validation previously failed; forcing additional exploration before retrying completion (streak: ${validationRetryStreak}).`,
+            };
           }
 
           const note = action.reason ?? "No reason provided";
@@ -183,6 +208,7 @@ export function createScrapeWorker(jobStore: JobStore) {
                 job.request.goal,
                 job.request.sourceType ?? "generic",
               );
+              jobStore.setValidationPayload(jobId, interimResult.validationPayload);
 
               if (interimResult.goalAssessment?.meetsGoal) {
                 goalSatisfiedEarly = true;
@@ -192,15 +218,18 @@ export function createScrapeWorker(jobStore: JobStore) {
               }
 
               const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
-              if (hasLoginFields) {
+              if (hasLoginFields && !confirmedLoggedIn) {
                 const loggedIn = await isLikelyLoggedIn(session.page);
-                if (!loggedIn) {
+                if (loggedIn) {
+                  confirmedLoggedIn = true;
+                } else if (await isLikelyLoginPage(session.page)) {
                   await navigateToLoginEntry(session.page);
                   await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
                 }
               }
 
               carryOverError = `Goal not met yet at step ${step}; continue exploring target content`;
+              validationRetryStreak += 1;
               jobStore.updateProgress(
                 jobId,
                 step,
@@ -217,6 +246,7 @@ export function createScrapeWorker(jobStore: JobStore) {
             await executeBrowserAction(session.page, action, job.request.loginFields ?? []);
             retryError = undefined;
             carryOverError = undefined;
+            validationRetryStreak = 0;
             break;
           } catch (error) {
             retryError = maskError(error);

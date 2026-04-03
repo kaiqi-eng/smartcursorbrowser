@@ -67,9 +67,26 @@ export interface ScrapeResult {
   summary?: string;
   transcript?: string;
   parsedPosts?: Array<{
-    title: string;
+    timestamp: string;
     content: string;
   }>;
+  validationPayload?: {
+    goal: string;
+    finalUrl: string;
+    pageTitle: string;
+    rawText: string;
+    rawHtml: string;
+    parsedPosts: Array<{
+      timestamp: string;
+      content: string;
+    }>;
+    extractedData: Record<string, unknown>;
+    instructions: {
+      outputFormat: string;
+      policy: string;
+      parsedPostsFormat: string;
+    };
+  };
   goalAssessment?: {
     meetsGoal: boolean;
     confidence: "low" | "medium" | "high";
@@ -103,6 +120,7 @@ export interface JobRecord {
   progress: JobProgress;
   error?: string;
   result?: ScrapeResult;
+  latestValidationPayload?: ScrapeResult["validationPayload"];
   liveView?: JobLiveView;
   cancelRequested: boolean;
 }

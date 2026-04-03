@@ -3,6 +3,7 @@ import type { ScrapeResult } from "../../types/job";
 import { getOpenAIClient } from "../ai/openaiClient";
 
 type GoalAssessment = NonNullable<ScrapeResult["goalAssessment"]>;
+type GoalValidationPayload = NonNullable<ScrapeResult["validationPayload"]>;
 const VALIDATION_HTML_MAX_CHARS = 100000;
 const VALIDATION_TEXT_MAX_CHARS = 12000;
 
@@ -50,13 +51,14 @@ export async function validateGoalAgainstExtraction(params: {
   pageTitle: string;
   rawText: string;
   rawHtml?: string;
-  parsedPosts: Array<{ title: string; content: string }>;
+  parsedPosts: Array<{ timestamp: string; content: string }>;
   extractedData?: Record<string, unknown>;
 }): Promise<GoalAssessment | undefined> {
   if (!env.openaiApiKey || !params.goal.trim()) {
     return undefined;
   }
 
+  const payload = buildValidationPayload(params);
   const client = getOpenAIClient();
   try {
     const completion = (await client.chat.completions.create({
@@ -69,25 +71,7 @@ export async function validateGoalAgainstExtraction(params: {
         },
         {
           role: "user",
-          content: JSON.stringify(
-            {
-              goal: params.goal,
-              finalUrl: params.finalUrl,
-              pageTitle: params.pageTitle,
-              rawText: makeHeadTailSnippet(params.rawText, VALIDATION_TEXT_MAX_CHARS),
-              rawHtml: makeHeadTailSnippet(params.rawHtml ?? "", VALIDATION_HTML_MAX_CHARS),
-              parsedPosts: params.parsedPosts.slice(0, 20),
-              extractedData: params.extractedData ?? {},
-              instructions: {
-                outputFormat:
-                  "{meetsGoal:boolean, confidence:'low'|'medium'|'high', reason:string, missingRequirements:string[]}",
-                policy:
-                  "Set meetsGoal=false if required content is missing, or if page appears to be auth/wall/landing content instead of requested target data.",
-              },
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify(payload, null, 2),
         },
       ],
       response_format: {
@@ -123,4 +107,31 @@ export async function validateGoalAgainstExtraction(params: {
   } catch {
     return undefined;
   }
+}
+
+export function buildValidationPayload(params: {
+  goal: string;
+  finalUrl: string;
+  pageTitle: string;
+  rawText: string;
+  rawHtml?: string;
+  parsedPosts: Array<{ timestamp: string; content: string }>;
+  extractedData?: Record<string, unknown>;
+}): GoalValidationPayload {
+  return {
+    goal: params.goal,
+    finalUrl: params.finalUrl,
+    pageTitle: params.pageTitle,
+    rawText: makeHeadTailSnippet(params.rawText, VALIDATION_TEXT_MAX_CHARS),
+    rawHtml: makeHeadTailSnippet(params.rawHtml ?? "", VALIDATION_HTML_MAX_CHARS),
+    parsedPosts: params.parsedPosts.slice(0, 20),
+    extractedData: params.extractedData ?? {},
+    instructions: {
+      outputFormat: "{meetsGoal:boolean, confidence:'low'|'medium'|'high', reason:string, missingRequirements:string[]}",
+      policy:
+        "Set meetsGoal=false if required content is missing, or if page appears to be auth/wall/landing content instead of requested target data.",
+      parsedPostsFormat:
+        "Each parsed post is {timestamp, content}, where timestamp is a relative label like 1d/1h/30m and content is raw post text.",
+    },
+  };
 }

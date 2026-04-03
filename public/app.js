@@ -8,6 +8,7 @@ const statusLine = document.getElementById("statusLine");
 const debugBox = document.getElementById("debugBox");
 const jobMeta = document.getElementById("jobMeta");
 const resultBox = document.getElementById("resultBox");
+const validationBox = document.getElementById("validationBox");
 const liveImage = document.getElementById("liveImage");
 let pollHandle = null;
 let pollFailures = 0;
@@ -173,8 +174,12 @@ async function pollOnce() {
         const { response: resultResponse, parsed: resultParsed } = resultAttempt;
         if (resultParsed.ok) {
           resultBox.textContent = JSON.stringify(resultParsed.data, null, 2);
+          validationBox.textContent = resultParsed.data.validationPayload
+            ? JSON.stringify(resultParsed.data.validationPayload, null, 2)
+            : "Result has no validation payload.";
         } else {
           resultBox.textContent = `Result endpoint returned non-JSON (${resultResponse.status}).\n${resultParsed.raw.slice(0, 300)}`;
+          validationBox.textContent = "Validation payload unavailable due to non-JSON result response.";
         }
       }
       pollFailures = 0;
@@ -187,6 +192,9 @@ async function pollOnce() {
     if (live.imageDataUrl) {
       liveImage.src = live.imageDataUrl;
     }
+    if (live.validationPayload) {
+      validationBox.textContent = JSON.stringify(live.validationPayload, null, 2);
+    }
     if (["succeeded", "failed", "cancelled"].includes(live.status)) {
       clearInterval(pollHandle);
       pollHandle = null;
@@ -194,8 +202,12 @@ async function pollOnce() {
       const { response: resultResponse, parsed: resultParsed } = resultAttempt;
       if (resultParsed.ok) {
         resultBox.textContent = JSON.stringify(resultParsed.data, null, 2);
+        validationBox.textContent = resultParsed.data.validationPayload
+          ? JSON.stringify(resultParsed.data.validationPayload, null, 2)
+          : "Result has no validation payload.";
       } else {
         resultBox.textContent = `Result endpoint returned non-JSON (${resultResponse.status}).\n${resultParsed.raw.slice(0, 300)}`;
+        validationBox.textContent = "Validation payload unavailable due to non-JSON result response.";
       }
     }
     setDebug(`Last live payload via ${liveBase}`, live);

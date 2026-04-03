@@ -144,6 +144,7 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
       pageTitle: job.liveView?.pageTitle,
       updatedAt: job.liveView?.updatedAt,
       imageDataUrl: job.liveView?.screenshotBase64 ? `data:image/png;base64,${job.liveView.screenshotBase64}` : null,
+      validationPayload: job.latestValidationPayload ?? null,
       error: job.error,
     });
   });

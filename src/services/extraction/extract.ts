@@ -2,7 +2,7 @@ import type { Page } from "playwright";
 import type { JobTraceEvent, ScrapeResult } from "../../types/job";
 import { parsePostsFromRawText } from "./parsePosts";
 import { extractOtterSummaryAndTranscript } from "./otterExtract";
-import { validateGoalAgainstExtraction } from "./validateGoal";
+import { buildValidationPayload, validateGoalAgainstExtraction } from "./validateGoal";
 
 const EXTRACTION_RETRIES = 3;
 const FINAL_SCROLL_ITERATIONS = 35;
@@ -142,8 +142,14 @@ async function collectFinalPageSnapshot(page: Page): Promise<{ rawText: string }
     page.evaluate(() => {
       const chunks: string[] = [];
       const seen: Record<string, true> = {};
+      const normalizeMultiline = (value: string): string =>
+        value
+          .split(/\r?\n/)
+          .map((line) => line.replace(/[ \t]+/g, " ").trim())
+          .filter(Boolean)
+          .join("\n");
 
-      const baseText = (document.body?.innerText ?? "").replace(/\s+/g, " ").trim();
+      const baseText = normalizeMultiline(document.body?.innerText ?? "");
       if (baseText) {
         chunks.push(baseText);
         seen[baseText] = true;
@@ -249,6 +255,14 @@ export async function extractResult(
   }
 
   const parsedPosts = await parsePostsFromRawText(rawText, goal);
+  const validationPayload = buildValidationPayload({
+    goal,
+    finalUrl,
+    pageTitle,
+    rawText,
+    parsedPosts,
+    extractedData,
+  });
   const goalAssessment = await validateGoalAgainstExtraction({
     goal,
     finalUrl,
@@ -264,6 +278,7 @@ export async function extractResult(
     rawText,
     extractedData,
     parsedPosts,
+    validationPayload,
     goalAssessment,
     trace,
   };
