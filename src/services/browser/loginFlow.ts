@@ -124,7 +124,8 @@ export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
   if (hasStrongAuthPrompt) {
     return false;
   }
-  return true;
+  // Without positive cues, default to logged-out to force deterministic login path when credentials are provided.
+  return false;
 }
 
 export async function navigateToLoginEntry(page: Page): Promise<boolean> {

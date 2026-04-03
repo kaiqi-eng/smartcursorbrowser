@@ -67,7 +67,7 @@ export async function validateGoalAgainstExtraction(params: {
         {
           role: "system",
           content:
-            "You are a strict extraction validator. Determine whether scraped output satisfies the user goal. Do not assume success. Be conservative.",
+            "You are a strict extraction validator. Determine whether scraped output satisfies the user goal. Be conservative, but do not fail a feed extraction solely because post text is truncated or includes locked-content banners.",
         },
         {
           role: "user",
@@ -102,7 +102,6 @@ export async function validateGoalAgainstExtraction(params: {
     if (!content) {
       return undefined;
     }
-
     return normalizeAssessment(JSON.parse(content));
   } catch {
     return undefined;
@@ -129,7 +128,7 @@ export function buildValidationPayload(params: {
     instructions: {
       outputFormat: "{meetsGoal:boolean, confidence:'low'|'medium'|'high', reason:string, missingRequirements:string[]}",
       policy:
-        "Set meetsGoal=false if required content is missing, or if page appears to be auth/wall/landing content instead of requested target data.",
+        "Set meetsGoal=false if required content is missing, or if page appears to be auth/wall/landing content instead of requested target data. For feed goals, set meetsGoal=true when finalUrl/pageTitle indicate in-app feed access and parsedPosts contains a substantial set of timestamped posts (typically >=10), even if some post bodies are truncated or include locked-content upgrade prompts.",
       parsedPostsFormat:
         "Each parsed post is {timestamp, content}, where timestamp is a relative label like 1d/1h/30m and content is raw post text.",
     },
