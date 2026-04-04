@@ -15,6 +15,11 @@ function toSummary(job: JobRecord): JobSummary {
     updatedAt: job.updatedAt,
     progress: job.progress,
     error: job.error,
+    webhook: {
+      urlConfigured: Boolean(job.request.webhookUrl),
+      dispatchedAt: job.webhookDispatchedAt,
+      dispatchError: job.webhookDispatchError,
+    },
   };
 }
 

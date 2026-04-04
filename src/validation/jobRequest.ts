@@ -14,11 +14,19 @@ export const scrapeJobRequestSchema = z.object({
   extractionSchema: z.record(z.string(), z.string()).optional(),
   loginFields: z.array(loginFieldSchema).optional(),
   webhookUrl: z.url().optional(),
+  callbackUrl: z.url().optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   timeoutMs: z.number().int().min(5000).max(900000).optional(),
   userAgent: z.string().min(3).optional(),
 });
 
 export function validateScrapeJobRequest(payload: unknown): ScrapeJobRequest {
-  return scrapeJobRequestSchema.parse(payload);
+  const parsed = scrapeJobRequestSchema.parse(payload);
+  const { callbackUrl, ...rest } = parsed;
+  const webhookUrl = rest.webhookUrl ?? callbackUrl;
+
+  return {
+    ...rest,
+    webhookUrl,
+  };
 }

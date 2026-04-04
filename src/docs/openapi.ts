@@ -164,6 +164,18 @@ export const openApiSpec = {
               },
             },
           },
+          webhookUrl: {
+            type: "string",
+            format: "uri",
+            example: "https://your-app.example/webhooks/scrape-finished",
+            description: "Completion webhook URL. Must use https.",
+          },
+          callbackUrl: {
+            type: "string",
+            format: "uri",
+            example: "https://your-app.example/webhooks/scrape-finished",
+            description: "Alias of webhookUrl for backwards compatibility.",
+          },
           maxSteps: { type: "integer", minimum: 1, maximum: 100, default: 25 },
           timeoutMs: { type: "integer", minimum: 5000, maximum: 900000, default: 120000 },
         },

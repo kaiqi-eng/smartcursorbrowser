@@ -141,4 +141,9 @@ export interface JobSummary {
   updatedAt: string;
   progress: JobProgress;
   error?: string;
+  webhook?: {
+    urlConfigured: boolean;
+    dispatchedAt?: string;
+    dispatchError?: string;
+  };
 }
