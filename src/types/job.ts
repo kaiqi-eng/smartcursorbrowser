@@ -1,4 +1,10 @@
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "paused_for_verification"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
 
 export interface LoginFieldInput {
   name: string;
@@ -22,7 +28,7 @@ export interface ActionContext {
   step: number;
   currentUrl: string;
   pageTitle: string;
-  screenshotBase64: string;
+  screenshotBase64?: string; // changed to optional (safe)
   textSnapshot: string;
   goal: string;
   lastError?: string;

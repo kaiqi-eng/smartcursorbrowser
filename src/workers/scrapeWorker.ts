@@ -4,7 +4,6 @@ import { executeBrowserAction } from "../services/browser/actions";
 import {
   attemptDeterministicLogin,
   isLikelyLoggedIn,
-  isLikelyLoginPage,
   navigateToLoginEntry,
 } from "../services/browser/loginFlow";
 import { performOtterLoginFlow } from "../services/browser/otterFlow";
@@ -17,6 +16,7 @@ import type { ActionContext, JobTraceEvent } from "../types/job";
 
 const MAX_ACTION_RETRIES = 3;
 const SNAPSHOT_RETRIES = 3;
+const MAX_TEMP_RESTRICTED_DONE_RETRIES = 3;
 
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -26,20 +26,61 @@ function isTransientContextError(error: unknown): boolean {
   return message.includes("execution context was destroyed") || message.includes("cannot find context");
 }
 
-async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserSession>>["page"]): Promise<{
-  screenshotBase64: string;
+function shouldCaptureScreenshot(step: number, retryError?: string): boolean {
+  if (step === 1) {
+    return true;
+  }
+
+  if (retryError) {
+    return true;
+  }
+
+  return step % env.screenshotEveryNSteps === 0;
+}
+
+function pushTrace(trace: JobTraceEvent[], event: JobTraceEvent): void {
+  trace.push(event);
+  if (trace.length > env.maxTraceEvents) {
+    trace.shift();
+  }
+}
+
+function isTemporaryRestrictedDoneAction(action: { type: string; reason?: string }): boolean {
+  if (action.type !== "done") {
+    return false;
+  }
+
+  const reason = (action.reason ?? "").toLowerCase();
+
+  return (
+    reason.includes("access is temporarily restricted") ||
+    reason.includes("temporarily restricted")
+  );
+}
+
+async function captureStepContext(
+  page: Awaited<ReturnType<typeof createBrowserSession>>["page"],
+  includeScreenshot = false,
+): Promise<{
+  screenshotBase64?: string;
   textSnapshot: string;
   currentUrl: string;
   pageTitle: string;
 }> {
   let lastError: unknown;
+
   for (let attempt = 1; attempt <= SNAPSHOT_RETRIES; attempt += 1) {
     try {
       await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
-      const screenshot = await page.screenshot({ type: "png", fullPage: false });
-      const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 3500) ?? "");
+
+      const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 2500) ?? "");
+
+      const screenshotBase64 = includeScreenshot
+        ? (await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })).toString("base64")
+        : undefined;
+
       return {
-        screenshotBase64: screenshot.toString("base64"),
+        screenshotBase64,
         textSnapshot,
         currentUrl: page.url(),
         pageTitle: await page.title(),
@@ -52,6 +93,7 @@ async function captureStepContext(page: Awaited<ReturnType<typeof createBrowserS
       await page.waitForTimeout(350);
     }
   }
+
   throw lastError instanceof Error ? lastError : new Error("Failed to capture page context");
 }
 
@@ -68,20 +110,24 @@ export function createScrapeWorker(jobStore: JobStore) {
     const trace: JobTraceEvent[] = [];
     let carryOverError: string | undefined;
     let goalSatisfiedEarly = false;
-    let validationRetryStreak = 0;
-    let confirmedLoggedIn = false;
+    let tempRestrictedDoneCount = 0;
+
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
+
     try {
       session = await createBrowserSession(job.request.userAgent);
       await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
+
       if (job.request.sourceType === "otter") {
         if ((job.request.loginFields?.length ?? 0) === 0) {
           throw new Error("Otter jobs require login credentials");
         }
+
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
         await performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []);
+
         const result = await extractResult(
           session.page,
           trace,
@@ -89,7 +135,9 @@ export function createScrapeWorker(jobStore: JobStore) {
           job.request.goal,
           "otter",
         );
+
         jobStore.setResult(jobId, result);
+
         if (!result.goalAssessment?.meetsGoal) {
           jobStore.setError(
             jobId,
@@ -98,41 +146,38 @@ export function createScrapeWorker(jobStore: JobStore) {
           jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
           return;
         }
+
         jobStore.updateStatus(jobId, "succeeded", "Otter transcript extraction completed");
         return;
       }
+
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
         if (loggedIn) {
           confirmedLoggedIn = true;
         }
         if (!loggedIn) {
-          const movedToLogin = await navigateToLoginEntry(session.page);
-          if (movedToLogin) {
-            jobStore.updateProgress(jobId, 0, "Navigated from home page to login entry");
-            const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
-            if (loginAttempted) {
-              await session.page.waitForTimeout(1200);
-              confirmedLoggedIn = await isLikelyLoggedIn(session.page);
-            }
-          }
+          jobStore.updateProgress(jobId, 0, "Attempting login");
+          await navigateToLoginEntry(session.page);
+          await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
         }
       }
+
       for (let step = 1; step <= maxSteps; step += 1) {
-        const currentJob = jobStore.get(jobId);
-        if (!currentJob) {
-          throw new Error("Job disappeared from store");
-        }
-        if (currentJob.cancelRequested) {
-          jobStore.updateStatus(jobId, "cancelled", "Cancelled by request");
+        const latestJob = jobStore.get(jobId);
+        if (!latestJob || latestJob.cancelRequested) {
+          jobStore.updateStatus(jobId, "cancelled", "Job cancelled");
           return;
         }
 
         let shouldEnd = false;
-        let retryError: string | undefined = carryOverError;
         let stepExecutionFailed = false;
+        let retryError = carryOverError;
+
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
-          const stepContext = await captureStepContext(session.page);
+          const includeScreenshot = shouldCaptureScreenshot(step, retryError);
+          const stepContext = await captureStepContext(session.page, includeScreenshot);
+
           const context: ActionContext = {
             step,
             goal: job.request.goal,
@@ -149,37 +194,33 @@ export function createScrapeWorker(jobStore: JobStore) {
                   secret: field.secret ?? false,
                 })),
           };
+
           jobStore.updateLiveView(jobId, {
             currentUrl: context.currentUrl,
             pageTitle: context.pageTitle,
-            screenshotBase64: context.screenshotBase64,
+            screenshotBase64: env.enableLiveScreenshots ? context.screenshotBase64 : undefined,
           });
 
           let action = await getNextAction(context, trace);
           const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
+
           if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
-            if (!confirmedLoggedIn) {
-              const loggedIn = await isLikelyLoggedIn(session.page);
-              if (loggedIn) {
-                confirmedLoggedIn = true;
-              } else {
-                const onLoginPage = await isLikelyLoginPage(session.page);
-                if (onLoginPage) {
-                  await navigateToLoginEntry(session.page);
-                  const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
-                  action = loginAttempted
-                    ? {
-                        type: "wait",
-                        waitMs: 1200,
-                        reason: "Detected login page; performed deterministic credential submit before continuing.",
-                      }
-                    : {
-                        type: "scroll",
-                        scrollBy: 500,
-                        reason: "Detected login page; bypassing early stop to continue login discovery.",
-                      };
-                }
-              }
+            const loggedIn = await isLikelyLoggedIn(session.page);
+            if (!loggedIn) {
+              await navigateToLoginEntry(session.page);
+              const loginAttempted = await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
+
+              action = loginAttempted
+                ? {
+                    type: "wait",
+                    waitMs: 1200,
+                    reason: "Detected login page; performed deterministic credential submit before continuing.",
+                  }
+                : {
+                    type: "scroll",
+                    scrollBy: 500,
+                    reason: "Detected login page; bypassing early stop to continue login discovery.",
+                  };
             }
           }
           if (validationRetryStreak > 0 && (action.type === "done" || action.type === "extract")) {
@@ -190,13 +231,49 @@ export function createScrapeWorker(jobStore: JobStore) {
             };
           }
 
+          // NEW: Handle "Access is temporarily restricted" done action up to 3 times only
+          if (isTemporaryRestrictedDoneAction(action)) {
+            tempRestrictedDoneCount += 1;
+
+            pushTrace(trace, {
+              timestamp: new Date().toISOString(),
+              step,
+              action,
+              note: `Temporary restricted done detected (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES})`,
+            });
+
+            if (tempRestrictedDoneCount < MAX_TEMP_RESTRICTED_DONE_RETRIES) {
+              carryOverError = `Access temporarily restricted detected (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES}). Retrying with alternate approach.`;
+
+              jobStore.updateProgress(
+                jobId,
+                step,
+                `Access temporarily restricted (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES}). Retrying...`,
+              );
+
+              // wait a little and continue to next step instead of ending
+              await session.page.waitForTimeout(2000);
+              stepExecutionFailed = true;
+              break;
+            }
+
+            jobStore.setError(
+              jobId,
+              "Access is temporarily restricted, cannot proceed further after 3 retries",
+            );
+            jobStore.updateStatus(jobId, "failed", "Access temporarily restricted after 3 retries");
+            return;
+          }
+
           const note = action.reason ?? "No reason provided";
-          trace.push({
+
+          pushTrace(trace, {
             timestamp: new Date().toISOString(),
             step,
             action,
             note: `[attempt ${attempt}] ${note}`,
           });
+
           jobStore.updateProgress(jobId, step, `${action.type}: ${note}`);
 
           if (shouldStop(action, step, maxSteps, startedAtMs, timeoutMs)) {
@@ -250,15 +327,18 @@ export function createScrapeWorker(jobStore: JobStore) {
             break;
           } catch (error) {
             retryError = maskError(error);
+
             jobStore.updateProgress(
               jobId,
               step,
               `Retrying action after error (${attempt}/${MAX_ACTION_RETRIES}): ${retryError}`,
             );
+
             if (attempt === MAX_ACTION_RETRIES) {
               carryOverError = retryError;
               stepExecutionFailed = true;
-              trace.push({
+
+              pushTrace(trace, {
                 timestamp: new Date().toISOString(),
                 step,
                 action: {
@@ -268,11 +348,13 @@ export function createScrapeWorker(jobStore: JobStore) {
                 },
                 note: `Step execution failed after ${MAX_ACTION_RETRIES} attempts: ${retryError}`,
               });
+
               jobStore.updateProgress(
                 jobId,
                 step,
                 `Action failed after ${MAX_ACTION_RETRIES} attempts; continuing with next AI step`,
               );
+
               break;
             }
           }
@@ -281,6 +363,7 @@ export function createScrapeWorker(jobStore: JobStore) {
         if (shouldEnd) {
           break;
         }
+
         if (stepExecutionFailed) {
           continue;
         }
@@ -296,7 +379,9 @@ export function createScrapeWorker(jobStore: JobStore) {
           job.request.goal,
           job.request.sourceType ?? "generic",
         );
+
         jobStore.setResult(jobId, result);
+
         if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
           jobStore.setError(
             jobId,

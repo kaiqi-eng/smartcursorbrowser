@@ -71,7 +71,9 @@ async function fillIfFound(page: Page, selectors: string[], value: string): Prom
       if ((await locator.count()) === 0) {
         continue;
       }
-      await locator.fill(value, { timeout: 2500 });
+      await locator.click({ timeout: 2500 });
+      await locator.fill("", { timeout: 2500 });
+      await locator.type(value, { delay: 35, timeout: 5000 });
       return true;
     } catch {
       // Try next selector.
@@ -89,6 +91,12 @@ export async function isLikelyLoginPage(page: Page): Promise<boolean> {
   return text.includes("sign in") || text.includes("log in") || text.includes("login") || text.includes("password");
 }
 
+/**
+ * More permissive:
+ * - if password field exists => not logged in
+ * - if obvious auth prompt => not logged in
+ * - otherwise assume logged in (like your original behavior)
+ */
 export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
   const hasPassword = (await page.locator("input[type='password']").count()) > 0;
   if (hasPassword) {
@@ -146,8 +154,10 @@ export async function navigateToLoginEntry(page: Page): Promise<boolean> {
       if ((await locator.count()) === 0) {
         continue;
       }
+
       const currentUrl = page.url();
       const href = await locator.getAttribute("href");
+
       if (href && !href.startsWith("#") && !href.toLowerCase().startsWith("javascript:")) {
         const resolvedUrl = new URL(href, currentUrl).toString();
         await page.goto(resolvedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
@@ -156,11 +166,11 @@ export async function navigateToLoginEntry(page: Page): Promise<boolean> {
 
       await locator.click({ timeout: 3000 });
       await page.waitForLoadState("domcontentloaded", { timeout: 8000 });
+
       if (page.url() !== currentUrl) {
         return true;
       }
 
-      // If click did not navigate current tab but link has href, force navigate.
       if (href) {
         const resolvedUrl = new URL(href, currentUrl).toString();
         await page.goto(resolvedUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
@@ -170,6 +180,7 @@ export async function navigateToLoginEntry(page: Page): Promise<boolean> {
       // Try next selector
     }
   }
+
   return false;
 }
 
@@ -206,6 +217,13 @@ export async function attemptDeterministicLogin(page: Page, loginFields: LoginFi
     }
   }
 
-  // No submit control found/clicked; still report partial success because fields were filled.
-  return true;
+  // If no submit button, still try Enter first
+  try {
+    await page.keyboard.press("Enter");
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+    return true;
+  } catch {
+    // If no navigation happened, keep old permissive behavior
+    return true;
+  }
 }
