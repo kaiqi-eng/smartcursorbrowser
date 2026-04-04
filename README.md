@@ -4,7 +4,7 @@ AI-agent backend service for scraping dynamic and authenticated websites by driv
 
 ## What It Does
 
-- Accepts async scrape jobs with `url`, `goal`, optional login fields, and extraction schema.
+- Accepts async scrape jobs with `url`, `goal`, optional login fields, extraction schema, and completion webhook.
 - Uses a browser session to navigate dynamic pages that traditional HTML scraping cannot capture.
 - Uses OpenAI in a step-by-step visual loop to decide navigation actions (click, type, wait, scroll).
 - Automatically retries failed actions up to 3 times by feeding the action error back into the AI for a new step.
@@ -62,11 +62,60 @@ All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
 {
   "url": "https://example.com/login",
   "goal": "Login and extract latest 3 headlines from dashboard",
+  "webhookUrl": "https://your-app.example/webhooks/scrape-finished",
   "loginFields": [
     { "name": "username", "selector": "#username", "value": "demo-user" },
     { "name": "password", "selector": "#password", "value": "my-pass", "secret": true }
   ],
   "maxSteps": 20
+}
+```
+
+## Completion Webhook
+
+When `webhookUrl` is provided on `POST /jobs`, the backend sends a `POST` request to that URL when the job reaches a terminal state:
+
+- `succeeded`
+- `failed`
+- `cancelled`
+
+Webhook rules:
+
+- URL must be valid `https`.
+- Fired once per job completion lifecycle.
+- Request body is JSON with full job outcome.
+- Secret login field values are redacted (`"[REDACTED]"`) in the webhook payload.
+
+Example webhook payload:
+
+```json
+{
+  "id": "1b8b8fdd-2f2f-4aa4-b8f6-7ab123456789",
+  "status": "succeeded",
+  "createdAt": "2026-04-03T19:22:00.000Z",
+  "startedAt": "2026-04-03T19:22:01.120Z",
+  "finishedAt": "2026-04-03T19:22:20.004Z",
+  "updatedAt": "2026-04-03T19:22:20.004Z",
+  "request": {
+    "url": "https://example.com/login",
+    "goal": "Login and extract latest 3 headlines from dashboard",
+    "webhookUrl": "https://your-app.example/webhooks/scrape-finished",
+    "loginFields": [
+      { "name": "username", "selector": "#username", "value": "demo-user", "secret": false },
+      { "name": "password", "selector": "#password", "value": "[REDACTED]", "secret": true }
+    ]
+  },
+  "progress": {
+    "step": 7,
+    "maxSteps": 20,
+    "message": "Scrape completed"
+  },
+  "error": null,
+  "result": {
+    "pageTitle": "Dashboard",
+    "trace": []
+  },
+  "latestValidationPayload": null
 }
 ```
 

@@ -13,6 +13,7 @@ export const scrapeJobRequestSchema = z.object({
   goal: z.string().min(5),
   extractionSchema: z.record(z.string(), z.string()).optional(),
   loginFields: z.array(loginFieldSchema).optional(),
+  webhookUrl: z.url().optional(),
   maxSteps: z.number().int().min(1).max(100).optional(),
   timeoutMs: z.number().int().min(5000).max(900000).optional(),
   userAgent: z.string().min(3).optional(),

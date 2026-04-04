@@ -18,6 +18,7 @@ export interface ScrapeJobRequest {
   goal: string;
   extractionSchema?: Record<string, string>;
   loginFields?: LoginFieldInput[];
+  webhookUrl?: string;
   sourceType?: "generic" | "otter";
   maxSteps?: number;
   timeoutMs?: number;
@@ -129,6 +130,8 @@ export interface JobRecord {
   latestValidationPayload?: ScrapeResult["validationPayload"];
   liveView?: JobLiveView;
   cancelRequested: boolean;
+  webhookDispatchedAt?: string;
+  webhookDispatchError?: string;
 }
 
 export interface JobSummary {

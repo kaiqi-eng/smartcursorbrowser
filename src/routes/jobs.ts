@@ -34,6 +34,15 @@ function isAllowedUrl(url: string): boolean {
   }
 }
 
+function isAllowedWebhookUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export function createJobsRouter(runtime: RuntimeServices): Router {
   const router = Router();
 
@@ -100,6 +109,11 @@ export function createJobsRouter(runtime: RuntimeServices): Router {
 
       if (!isAllowedUrl(payload.url)) {
         res.status(403).json({ error: "Target URL domain is not allowed" });
+        return;
+      }
+
+      if (payload.webhookUrl && !isAllowedWebhookUrl(payload.webhookUrl)) {
+        res.status(400).json({ error: "webhookUrl must be a valid https URL" });
         return;
       }
 
