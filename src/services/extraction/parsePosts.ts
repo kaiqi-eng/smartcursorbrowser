@@ -2,7 +2,7 @@ import { env } from "../../config/env";
 import { getOpenAIClient } from "../ai/openaiClient";
 
 interface ParsedPost {
-  title: string;
+  timestamp: string;
   content: string;
 }
 
@@ -31,25 +31,55 @@ function fallbackParsePosts(rawText: string): ParsedPost[] {
   }
 
   const posts: ParsedPost[] = [];
+  const standaloneTimestampPattern = /^(?:\d+\s*[smhdw]\s*){1,3}(?:ago)?$/i;
+  const timestampWithTrailingPattern = /^((?:\d+\s*[smhdw]\s*){1,3}(?:ago)?)(?:\s*[|:\-]\s*|\s+)(.+)$/i;
+  let currentPost: ParsedPost | null = null;
+
+  const pushCurrentPost = () => {
+    if (!currentPost) {
+      return;
+    }
+    const cleanedContent = currentPost.content.trim();
+    if (!cleanedContent) {
+      currentPost = null;
+      return;
+    }
+    posts.push({
+      timestamp: currentPost.timestamp.trim(),
+      content: cleanedContent,
+    });
+    currentPost = null;
+  };
+
   for (let i = 0; i < lines.length; i += 1) {
-    const title = lines[i];
-    if (!title || title.length > 140) {
+    const line = lines[i];
+    const trailingMatch = line.match(timestampWithTrailingPattern);
+    const isStandaloneTimestamp = standaloneTimestampPattern.test(line);
+
+    if (trailingMatch || isStandaloneTimestamp) {
+      pushCurrentPost();
+
+      const timestamp = (trailingMatch ? trailingMatch[1] : line).replace(/\s+/g, "").toLowerCase();
+      const initialContent = trailingMatch ? trailingMatch[2].trim() : "";
+      currentPost = {
+        timestamp,
+        content: initialContent,
+      };
+      if (posts.length >= 20) {
+        break;
+      }
       continue;
     }
 
-    // Prefer using the next non-empty line as content.
-    const content = lines[i + 1] ?? "";
-    if (!content || content === title) {
+    if (!currentPost) {
       continue;
     }
 
-    posts.push({ title, content });
-    if (posts.length >= 20) {
-      break;
-    }
+    currentPost.content = currentPost.content ? `${currentPost.content}\n${line}` : line;
   }
 
-  return posts;
+  pushCurrentPost();
+  return posts.slice(0, 20);
 }
 
 function coercePosts(value: unknown): ParsedPost[] {
@@ -61,13 +91,16 @@ function coercePosts(value: unknown): ParsedPost[] {
       if (!item || typeof item !== "object") {
         return null;
       }
-      const title = typeof (item as { title?: unknown }).title === "string" ? (item as { title: string }).title.trim() : "";
+      const timestamp =
+        typeof (item as { timestamp?: unknown }).timestamp === "string"
+          ? (item as { timestamp: string }).timestamp.trim().toLowerCase()
+          : "";
       const content =
         typeof (item as { content?: unknown }).content === "string" ? (item as { content: string }).content.trim() : "";
-      if (!title && !content) {
+      if (!timestamp || !content) {
         return null;
       }
-      return { title, content };
+      return { timestamp, content };
     })
     .filter((item): item is ParsedPost => item !== null);
 }
@@ -86,15 +119,17 @@ export async function parsePostsFromRawText(rawText: string, goal: string): Prom
         {
           role: "system",
           content:
-            "Extract post-like entries from website text. Keep wording as close to source as possible. Do not paraphrase unless needed for minimal readability.",
+            "Extract post-like entries from website text. Keep wording as close to source as possible and avoid paraphrasing.",
         },
         {
           role: "user",
           content: [
-            "Return an object with a single key `posts` as an array of `{title, content}`.",
+            "Return an object with a single key `posts` as an array of `{timestamp, content}`.",
             "Rules:",
-            "- Keep title/content very close to source text (minimal adjustments).",
-            "- If title is missing, set title to empty string.",
+            "- Keep content as raw text chunks with only minimal cleanup.",
+            "- Timestamp must be a relative label copied from source such as `1d`, `1h`, `30m`.",
+            "- Do not extract or infer titles.",
+            "- If a post does not have a clear relative timestamp label, omit that post.",
             "- If there are no clear posts, return `{ \"posts\": [] }`.",
             `Goal context: ${goal}`,
             "Source text:",
@@ -116,10 +151,10 @@ export async function parsePostsFromRawText(rawText: string, goal: string): Prom
                   type: "object",
                   additionalProperties: false,
                   properties: {
-                    title: { type: "string" },
+                    timestamp: { type: "string" },
                     content: { type: "string" },
                   },
-                  required: ["title", "content"],
+                  required: ["timestamp", "content"],
                 },
               },
             },
@@ -165,11 +200,13 @@ export async function parsePostsFromHtml(rawHtml: string, goal: string, fallback
         {
           role: "user",
           content: [
-            "Return JSON object: {\"posts\": [{\"title\": string, \"content\": string}]}",
+            "Return JSON object: {\"posts\": [{\"timestamp\": string, \"content\": string}]}",
             "Rules:",
             "- Use visible content from the HTML (avoid script/style/meta/json blobs).",
             "- Include as many distinct posts as reliably identifiable.",
-            "- If title is missing, set it to empty string.",
+            "- Include a relative timestamp label copied from source (examples: `1d`, `1h`, `30m`).",
+            "- Do not extract or infer titles.",
+            "- If a post has no clear relative timestamp label, omit it.",
             "- If no posts are found, return {\"posts\":[]}.",
             `Goal context: ${goal}`,
             "Source HTML:",
@@ -191,10 +228,10 @@ export async function parsePostsFromHtml(rawHtml: string, goal: string, fallback
                   type: "object",
                   additionalProperties: false,
                   properties: {
-                    title: { type: "string" },
+                    timestamp: { type: "string" },
                     content: { type: "string" },
                   },
-                  required: ["title", "content"],
+                  required: ["timestamp", "content"],
                 },
               },
             },

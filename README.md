@@ -81,7 +81,7 @@ All `/jobs` endpoints require header `x-api-key: <SERVICE_API_KEY>`.
 `GET /jobs/:id/result` includes both raw and structured extraction:
 
 - `rawText`: comprehensive text extracted from page content
-- `parsedPosts`: AI-parsed array with minimal rewriting
+- `parsedPosts`: AI-parsed array of timestamped raw-text chunks
 
 Example:
 
@@ -89,7 +89,7 @@ Example:
 {
   "parsedPosts": [
     {
-      "title": "Post title from source",
+      "timestamp": "1h",
       "content": "Post content copied as closely as possible from source text."
     }
   ]

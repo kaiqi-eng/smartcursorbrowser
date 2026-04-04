@@ -103,15 +103,37 @@ export async function isLikelyLoggedIn(page: Page): Promise<boolean> {
     return false;
   }
 
-  const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 3000) ?? "")).toLowerCase();
+  const text = (await page.evaluate(() => document.body?.innerText?.slice(0, 8000) ?? "")).toLowerCase();
+  const hasStrongAuthPrompt =
+    text.includes("sign in to continue") ||
+    text.includes("log in to continue") ||
+    text.includes("forgot password") ||
+    text.includes("enter your password") ||
+    text.includes("use your email");
+  const hasLoggedInCue =
+    text.includes("sign out") ||
+    text.includes("logout") ||
+    text.includes("my account") ||
+    text.includes("profile") ||
+    text.includes("dashboard");
+  const hasFeedCue =
+    text.includes("bookmarks") ||
+    text.includes("latest") ||
+    text.includes("trending") ||
+    text.includes("ask ai") ||
+    text.includes("user profile");
 
-  const authPrompts = ["sign in", "log in", "login", "continue with google", "continue with email"];
-
-  if (authPrompts.some((s) => text.includes(s))) {
+  if (hasLoggedInCue) {
+    return true;
+  }
+  if (hasFeedCue) {
+    return true;
+  }
+  if (hasStrongAuthPrompt) {
     return false;
   }
-
-  return true;
+  // Without positive cues, default to logged-out to force deterministic login path when credentials are provided.
+  return false;
 }
 
 export async function navigateToLoginEntry(page: Page): Promise<boolean> {

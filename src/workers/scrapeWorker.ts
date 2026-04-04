@@ -153,6 +153,9 @@ export function createScrapeWorker(jobStore: JobStore) {
 
       if ((job.request.loginFields?.length ?? 0) > 0) {
         const loggedIn = await isLikelyLoggedIn(session.page);
+        if (loggedIn) {
+          confirmedLoggedIn = true;
+        }
         if (!loggedIn) {
           jobStore.updateProgress(jobId, 0, "Attempting login");
           await navigateToLoginEntry(session.page);
@@ -183,11 +186,13 @@ export function createScrapeWorker(jobStore: JobStore) {
             screenshotBase64: stepContext.screenshotBase64,
             textSnapshot: stepContext.textSnapshot,
             lastError: retryError,
-            loginFieldHints: (job.request.loginFields ?? []).map((field) => ({
-              name: field.name,
-              selector: field.selector,
-              secret: field.secret ?? false,
-            })),
+            loginFieldHints: confirmedLoggedIn
+              ? []
+              : (job.request.loginFields ?? []).map((field) => ({
+                  name: field.name,
+                  selector: field.selector,
+                  secret: field.secret ?? false,
+                })),
           };
 
           jobStore.updateLiveView(jobId, {
@@ -217,6 +222,13 @@ export function createScrapeWorker(jobStore: JobStore) {
                     reason: "Detected login page; bypassing early stop to continue login discovery.",
                   };
             }
+          }
+          if (validationRetryStreak > 0 && (action.type === "done" || action.type === "extract")) {
+            action = {
+              type: "scroll",
+              scrollBy: 900,
+              reason: `Goal validation previously failed; forcing additional exploration before retrying completion (streak: ${validationRetryStreak}).`,
+            };
           }
 
           // NEW: Handle "Access is temporarily restricted" done action up to 3 times only
@@ -273,6 +285,7 @@ export function createScrapeWorker(jobStore: JobStore) {
                 job.request.goal,
                 job.request.sourceType ?? "generic",
               );
+              jobStore.setValidationPayload(jobId, interimResult.validationPayload);
 
               if (interimResult.goalAssessment?.meetsGoal) {
                 goalSatisfiedEarly = true;
@@ -282,15 +295,18 @@ export function createScrapeWorker(jobStore: JobStore) {
               }
 
               const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
-              if (hasLoginFields) {
+              if (hasLoginFields && !confirmedLoggedIn) {
                 const loggedIn = await isLikelyLoggedIn(session.page);
-                if (!loggedIn) {
+                if (loggedIn) {
+                  confirmedLoggedIn = true;
+                } else if (await isLikelyLoginPage(session.page)) {
                   await navigateToLoginEntry(session.page);
                   await attemptDeterministicLogin(session.page, job.request.loginFields ?? []);
                 }
               }
 
               carryOverError = `Goal not met yet at step ${step}; continue exploring target content`;
+              validationRetryStreak += 1;
               jobStore.updateProgress(
                 jobId,
                 step,
@@ -307,6 +323,7 @@ export function createScrapeWorker(jobStore: JobStore) {
             await executeBrowserAction(session.page, action, job.request.loginFields ?? []);
             retryError = undefined;
             carryOverError = undefined;
+            validationRetryStreak = 0;
             break;
           } catch (error) {
             retryError = maskError(error);
