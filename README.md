@@ -85,6 +85,7 @@ Webhook rules:
 - Fired once per job completion lifecycle.
 - Request body is JSON with full job outcome.
 - Secret login field values are redacted (`"[REDACTED]"`) in the webhook payload.
+- Applies only to generic scrape jobs from `POST /jobs` (Otter transcript flow is unchanged).
 
 Example webhook payload:
 
