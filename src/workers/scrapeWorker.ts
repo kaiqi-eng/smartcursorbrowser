@@ -3,6 +3,7 @@ import { getNextAction } from "../services/ai/visualNavigator";
 import { executeBrowserAction } from "../services/browser/actions";
 import {
   attemptDeterministicLogin,
+  isLikelyLoginPage,
   isLikelyLoggedIn,
   navigateToLoginEntry,
 } from "../services/browser/loginFlow";
@@ -111,6 +112,8 @@ export function createScrapeWorker(jobStore: JobStore) {
     let carryOverError: string | undefined;
     let goalSatisfiedEarly = false;
     let tempRestrictedDoneCount = 0;
+    let confirmedLoggedIn = false;
+    let validationRetryStreak = 0;
 
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
