@@ -11,6 +11,11 @@ AI-agent backend service for scraping dynamic and authenticated websites by driv
 - Normalizes common non-Playwright selectors (for example `:contains("Login")`) into Playwright-compatible selectors.
 - Exposes Swagger UI for manual API testing.
 
+## Internal Docs
+
+- Full project overview: [`PROJECT_OVERVIEW.md`](PROJECT_OVERVIEW.md)
+- Extraction service usage: [`src/services/extraction/README.md`](src/services/extraction/README.md)
+
 ## Requirements
 
 - Node.js 20+

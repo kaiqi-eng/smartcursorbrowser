@@ -18,6 +18,7 @@ import type { ActionContext, JobTraceEvent } from "../types/job";
 const MAX_ACTION_RETRIES = 3;
 const SNAPSHOT_RETRIES = 3;
 const MAX_TEMP_RESTRICTED_DONE_RETRIES = 3;
+const SCREENSHOT_TIMEOUT_MS = 8000;
 
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -25,6 +26,14 @@ function isTransientContextError(error: unknown): boolean {
   }
   const message = error.message.toLowerCase();
   return message.includes("execution context was destroyed") || message.includes("cannot find context");
+}
+
+function isScreenshotTimeoutError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return message.includes("page.screenshot") && message.includes("timeout");
 }
 
 function shouldCaptureScreenshot(step: number, retryError?: string): boolean {
@@ -76,9 +85,26 @@ async function captureStepContext(
 
       const textSnapshot = await page.evaluate(() => document.body?.innerText?.slice(0, 2500) ?? "");
 
-      const screenshotBase64 = includeScreenshot
-        ? (await page.screenshot({ type: "jpeg", quality: 45, fullPage: false })).toString("base64")
-        : undefined;
+      let screenshotBase64: string | undefined;
+      if (includeScreenshot) {
+        try {
+          screenshotBase64 = (
+            await page.screenshot({
+              type: "jpeg",
+              quality: 45,
+              fullPage: false,
+              timeout: SCREENSHOT_TIMEOUT_MS,
+              animations: "disabled",
+              caret: "hide",
+            })
+          ).toString("base64");
+        } catch (error) {
+          // Keep browser loop alive when screenshot capture is flaky.
+          if (!isScreenshotTimeoutError(error) && !isTransientContextError(error)) {
+            throw error;
+          }
+        }
+      }
 
       return {
         screenshotBase64,
