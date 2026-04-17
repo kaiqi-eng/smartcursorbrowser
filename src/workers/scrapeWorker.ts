@@ -11,6 +11,7 @@ import { performOtterLoginFlow } from "../services/browser/otterFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
+import { runOxylabsFallback } from "../services/fallback/oxylabsFallback";
 import { JobStore } from "../services/jobStore";
 import { maskError } from "../services/security/redaction";
 import type { ActionContext, JobTraceEvent } from "../types/job";
@@ -122,6 +123,94 @@ async function captureStepContext(
   }
 
   throw lastError instanceof Error ? lastError : new Error("Failed to capture page context");
+}
+
+/**
+ * Attempt the Oxylabs fallback extraction and store results on the job.
+ * Returns true if the fallback produced usable data.
+ */
+async function attemptFallback(
+  jobId: string,
+  url: string,
+  jobStore: JobStore,
+  session?: Awaited<ReturnType<typeof createBrowserSession>> | null
+): Promise<boolean> {
+  // Always close the session if provided
+  if (session) {
+    await closeBrowserSession(session);
+    session = null;
+  }
+
+  jobStore.updateProgress(jobId, 0, "Browser flow did not meet goal — attempting Oxylabs fallback");
+
+  try {
+    let fallbackResults = await runOxylabsFallback(url);
+
+    // Filter out unwanted articles as before
+    const errorKeywords = [
+      "verify you are a human",
+      "access denied",
+      "access to this page has been denied",
+      "please enable cookies",
+      "subscribe",
+      "sign in",
+      "paywall",
+      "robot check",
+      "are you a robot",
+      "powered by perimeterx",
+      "your subscription",
+      "customer center",
+      "please login",
+      "please sign in",
+      "not available in your country"
+    ];
+
+    fallbackResults = fallbackResults.filter(article => {
+      if (!article) return false;
+      const text = `${article.title ?? ""} ${article.content ?? ""}`.toLowerCase();
+      return !errorKeywords.some(keyword => text.includes(keyword));
+    });
+
+    // Map to only the required fields, after filtering out null/undefined
+    const sanitizedArticles = fallbackResults
+      .filter((article): article is NonNullable<typeof article> => !!article)
+      .map(article => ({
+        title: article.title ?? "",
+        source: article.source ?? "",
+        thumbnail: article.thumbnail ?? "",
+        publishDate: article.publishDate ?? "",
+        content: article.content ?? "",
+      }));
+
+    if (!sanitizedArticles || sanitizedArticles.length === 0) {
+      jobStore.setError(jobId, "Oxylabs fallback returned no usable data");
+      jobStore.updateStatus(jobId, "failed", "Fallback extraction empty");
+      return false;
+    }
+
+    jobStore.setResult(jobId, {
+      finalUrl: url,
+      extractedData: { articles: sanitizedArticles },
+      rawText: sanitizedArticles
+        .map((a) => [a.title, a.content].filter(Boolean).join("\n"))
+        .join("\n\n"),
+      goalAssessment: {
+        meetsGoal: true,
+        confidence: "medium",
+        reason: `Extracted ${sanitizedArticles.length} result(s) via Oxylabs fallback after browser flow failed to satisfy goal.`,
+        missingRequirements: [],
+      },
+      trace: [],
+    });
+
+    jobStore.updateStatus(jobId, "succeeded", `Fallback extraction completed (${sanitizedArticles.length} result(s))`);
+    return true;
+  } catch (fallbackErr) {
+    const msg = maskError(fallbackErr);
+    jobStore.setError(jobId, `Oxylabs fallback threw an error: ${msg}`);
+    jobStore.updateStatus(jobId, "failed", "Fallback extraction failed");
+    return false;
+  }
 }
 
 export function createScrapeWorker(jobStore: JobStore) {
@@ -260,7 +349,7 @@ export function createScrapeWorker(jobStore: JobStore) {
             };
           }
 
-          // NEW: Handle "Access is temporarily restricted" done action up to 3 times only
+          // Handle "Access is temporarily restricted" done action up to 3 times, then trigger fallback
           if (isTemporaryRestrictedDoneAction(action)) {
             tempRestrictedDoneCount += 1;
 
@@ -280,17 +369,16 @@ export function createScrapeWorker(jobStore: JobStore) {
                 `Access temporarily restricted (${tempRestrictedDoneCount}/${MAX_TEMP_RESTRICTED_DONE_RETRIES}). Retrying...`,
               );
 
-              // wait a little and continue to next step instead of ending
               await session.page.waitForTimeout(2000);
               stepExecutionFailed = true;
               break;
             }
 
-            jobStore.setError(
-              jobId,
-              "Access is temporarily restricted, cannot proceed further after 3 retries",
-            );
-            jobStore.updateStatus(jobId, "failed", "Access temporarily restricted after 3 retries");
+            // All retries exhausted — try Oxylabs fallback
+            console.log(`🚨 Triggering fallback after ${MAX_TEMP_RESTRICTED_DONE_RETRIES} temporary-restricted retries`);
+            await closeBrowserSession(session);
+            session = null;
+            await attemptFallback(jobId, job.request.url, jobStore);
             return;
           }
 
@@ -409,21 +497,35 @@ export function createScrapeWorker(jobStore: JobStore) {
           job.request.sourceType ?? "generic",
         );
 
-        jobStore.setResult(jobId, result);
-
-        if (result.goalAssessment && !result.goalAssessment.meetsGoal) {
-          jobStore.setError(
-            jobId,
-            `Goal validation failed after full run (${result.goalAssessment.confidence}): ${result.goalAssessment.reason}`,
-          );
-          jobStore.updateStatus(jobId, "failed", "Goal not satisfied after max steps");
-        } else {
+        if (result.goalAssessment && result.goalAssessment.meetsGoal) {
+          jobStore.setError(jobId, ""); // Clear any previous error
+          jobStore.setResult(jobId, result);
           jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
+        } else {
+          // Goal not met after full browser run — try Oxylabs fallback
+          console.log("🚨 Browser flow goal not met after max steps — triggering Oxylabs fallback");
+
+          if (session) {
+            await closeBrowserSession(session);
+            session = null;
+          }
+          await attemptFallback(jobId, job.request.url, jobStore);
         }
       }
     } catch (error) {
-      jobStore.setError(jobId, maskError(error));
-      jobStore.updateStatus(jobId, "failed", "Execution failed");
+      // Unexpected top-level failure — attempt fallback before marking as failed
+      const errMsg = maskError(error);
+      console.log(`🚨 Top-level browser error: ${errMsg} — triggering Oxylabs fallback`);
+
+      if (session) {
+        try {
+          await closeBrowserSession(session);
+        } catch {
+          // ignore close errors at this point
+        }
+        session = null;
+      }
+      await attemptFallback(jobId, job.request.url, jobStore);
     } finally {
       if (session) {
         await closeBrowserSession(session);
