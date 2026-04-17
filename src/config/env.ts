@@ -32,10 +32,6 @@ export const env = {
   cleanupIntervalMs: Math.max(30_000, toNum(process.env.CLEANUP_INTERVAL_MS, 60_000)),
   blockHeavyResources: toBool(process.env.BLOCK_HEAVY_RESOURCES, true),
 
-  // Oxylabs fallback credentials — use OXYLABS_USERNAME / OXYLABS_PASSWORD in .env
-  oxylabsUsername: process.env.OXYLABS_USERNAME ?? "",
-  oxylabsPassword: process.env.OXYLABS_PASSWORD ?? "",
-
   allowedDomains: (process.env.ALLOWED_DOMAINS ?? "")
     .split(",")
     .map((value) => value.trim())
