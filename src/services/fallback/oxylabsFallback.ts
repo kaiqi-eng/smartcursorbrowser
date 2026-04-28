@@ -2,6 +2,10 @@ import { Buffer } from "buffer";
 import * as cheerio from "cheerio";
 import { env } from "../../config/env";
 
+function timeoutSignal(timeoutMs: number): AbortSignal {
+  return AbortSignal.timeout(timeoutMs);
+}
+
 // =====================
 // ARTICLE EXTRACTOR
 // =====================
@@ -98,6 +102,7 @@ async function fetchWithOxylabs(url: string): Promise<string> {
   const res = await fetch("https://data.oxylabs.io/v1/queries", {
     method: "POST",
     body: JSON.stringify({ source: "universal", url }),
+    signal: timeoutSignal(env.oxylabsRequestTimeoutMs),
     headers: {
       "Content-Type": "application/json",
       Authorization: authHeader,
@@ -116,6 +121,7 @@ async function fetchWithOxylabs(url: string): Promise<string> {
 
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     const pollRes = await fetch(resultUrl, {
+      signal: timeoutSignal(env.oxylabsRequestTimeoutMs),
       headers: { Authorization: authHeader },
     });
 
@@ -160,7 +166,9 @@ export async function runOxylabsFallback(inputUrl: string) {
     const subResults = await Promise.all(
       links.map(async (link) => {
         try {
-          const res = await fetch(link);
+          const res = await fetch(link, {
+            signal: timeoutSignal(env.oxylabsArticleFetchTimeoutMs),
+          });
           const subHtml = await res.text();
           const article = extractArticle(subHtml, link);
 

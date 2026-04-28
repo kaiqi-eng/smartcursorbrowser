@@ -532,8 +532,26 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
       }
     } catch (error) {
-      // Unexpected top-level failure — attempt fallback before marking as failed
       const errMsg = maskError(error);
+
+      if (job.request.sourceType === "otter") {
+        console.log(`Otter job failed: ${errMsg}`);
+
+        if (session) {
+          try {
+            await closeBrowserSession(session);
+          } catch {
+            // ignore close errors at this point
+          }
+          session = null;
+        }
+
+        jobStore.setError(jobId, errMsg);
+        jobStore.updateStatus(jobId, "failed", "Otter extraction failed");
+        return;
+      }
+
+      // Unexpected top-level failure — attempt fallback before marking as failed
       console.log(`🚨 Top-level browser error: ${errMsg} — triggering Oxylabs fallback`);
 
       if (session) {

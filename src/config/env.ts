@@ -38,6 +38,8 @@ export const env = {
   // Oxylabs fallback credentials — use OXYLABS_USERNAME / OXYLABS_PASSWORD in .env
   oxylabsUsername: process.env.OXYLABS_USERNAME ?? "",
   oxylabsPassword: process.env.OXYLABS_PASSWORD ?? "",
+  oxylabsRequestTimeoutMs: Math.max(1_000, toNum(process.env.OXYLABS_REQUEST_TIMEOUT_MS, 30_000)),
+  oxylabsArticleFetchTimeoutMs: Math.max(1_000, toNum(process.env.OXYLABS_ARTICLE_FETCH_TIMEOUT_MS, 15_000)),
 
   allowedDomains: (process.env.ALLOWED_DOMAINS ?? "")
     .split(",")
