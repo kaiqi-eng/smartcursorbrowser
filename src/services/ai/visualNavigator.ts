@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import type { ActionContext, BrowserAction, JobTraceEvent } from "../../types/job";
 import { getOpenAIClient } from "./openaiClient";
+import { withTimeout } from "../../utils/timeout";
 
 const SYSTEM_PROMPT = `You are a browser automation agent. Your only output must be a single raw JSON object — no markdown, no code fences, no explanation.
 
@@ -91,20 +92,24 @@ export async function getNextAction(context: ActionContext, trace: JobTraceEvent
     });
   }
 
-  const response = (await client.responses.create({
-    model: env.openaiModel,
-    input: [
-      {
-        role: "system",
-        content: [{ type: "input_text", text: SYSTEM_PROMPT }],
-      },
-      {
-        role: "user",
-        content: userContent,
-      },
-    ],
-    max_output_tokens: 250,
-  })) as { output_text?: string };
+  const response = (await withTimeout(
+    client.responses.create({
+      model: env.openaiModel,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: SYSTEM_PROMPT }],
+        },
+        {
+          role: "user",
+          content: userContent,
+        },
+      ],
+      max_output_tokens: 250,
+    }),
+    env.aiTimeoutMs,
+    "visual navigator action planning",
+  )) as { output_text?: string };
 
   const outputText = response.output_text?.trim();
   if (!outputText) {

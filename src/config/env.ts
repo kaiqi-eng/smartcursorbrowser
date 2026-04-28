@@ -20,7 +20,10 @@ export const env = {
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   maxJobSteps: toNum(process.env.MAX_JOB_STEPS, 25),
-  defaultJobTimeoutMs: toNum(process.env.JOB_TIMEOUT_MS, 120000),
+  defaultJobTimeoutMs: Math.max(1_800_000, toNum(process.env.JOB_TIMEOUT_MS, 1_800_000)),
+  aiTimeoutMs: Math.max(1_800_000, toNum(process.env.AI_TIMEOUT_MS, 1_800_000)),
+  extractionTimeoutMs: Math.max(1_800_000, toNum(process.env.EXTRACTION_TIMEOUT_MS, 1_800_000)),
+  teardownTimeoutMs: Math.max(1_800_000, toNum(process.env.TEARDOWN_TIMEOUT_MS, 1_800_000)),
   browserHeadless: toBool(process.env.BROWSER_HEADLESS, true),
 
   // Memory optimization flags (safe defaults)

@@ -1,5 +1,6 @@
 import { env } from "../../config/env";
 import { getOpenAIClient } from "../ai/openaiClient";
+import { withTimeout } from "../../utils/timeout";
 
 interface ParsedPost {
   timestamp: string;
@@ -113,58 +114,62 @@ export async function parsePostsFromRawText(rawText: string, goal: string): Prom
 
   const client = getOpenAIClient();
   try {
-    const completion = (await client.chat.completions.create({
-      model: env.openaiModel,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract post-like entries from website text. Keep wording as close to source as possible and avoid paraphrasing.",
-        },
-        {
-          role: "user",
-          content: [
-            "Return an object with a single key `posts` as an array of `{timestamp, content}`.",
-            "Rules:",
-            "- Keep content as raw text chunks with only minimal cleanup.",
-            "- Timestamp must be a relative label copied from source such as `1d`, `1h`, `30m`.",
-            "- Do not extract or infer titles.",
-            "- If a post does not have a clear relative timestamp label, omit that post.",
-            "- If there are no clear posts, return `{ \"posts\": [] }`.",
-            `Goal context: ${goal}`,
-            "Source text:",
-            textForModel,
-          ].join("\n"),
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "parsed_posts",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              posts: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    timestamp: { type: "string" },
-                    content: { type: "string" },
+    const completion = (await withTimeout(
+      client.chat.completions.create({
+        model: env.openaiModel,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Extract post-like entries from website text. Keep wording as close to source as possible and avoid paraphrasing.",
+          },
+          {
+            role: "user",
+            content: [
+              "Return an object with a single key `posts` as an array of `{timestamp, content}`.",
+              "Rules:",
+              "- Keep content as raw text chunks with only minimal cleanup.",
+              "- Timestamp must be a relative label copied from source such as `1d`, `1h`, `30m`.",
+              "- Do not extract or infer titles.",
+              "- If a post does not have a clear relative timestamp label, omit that post.",
+              "- If there are no clear posts, return `{ \"posts\": [] }`.",
+              `Goal context: ${goal}`,
+              "Source text:",
+              textForModel,
+            ].join("\n"),
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "parsed_posts",
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                posts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      timestamp: { type: "string" },
+                      content: { type: "string" },
+                    },
+                    required: ["timestamp", "content"],
                   },
-                  required: ["timestamp", "content"],
                 },
               },
+              required: ["posts"],
             },
-            required: ["posts"],
+            strict: true,
           },
-          strict: true,
         },
-      },
-      max_tokens: 1200,
-    })) as {
+        max_tokens: 1200,
+      }),
+      env.aiTimeoutMs,
+      "parse posts from raw text",
+    )) as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };
 
@@ -189,59 +194,63 @@ export async function parsePostsFromHtml(rawHtml: string, goal: string, fallback
 
   const client = getOpenAIClient();
   try {
-    const completion = (await client.chat.completions.create({
-      model: env.openaiModel,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract feed/post entries from HTML. Prefer article/card/feed items and keep wording close to source text without unnecessary paraphrase.",
-        },
-        {
-          role: "user",
-          content: [
-            "Return JSON object: {\"posts\": [{\"timestamp\": string, \"content\": string}]}",
-            "Rules:",
-            "- Use visible content from the HTML (avoid script/style/meta/json blobs).",
-            "- Include as many distinct posts as reliably identifiable.",
-            "- Include a relative timestamp label copied from source (examples: `1d`, `1h`, `30m`).",
-            "- Do not extract or infer titles.",
-            "- If a post has no clear relative timestamp label, omit it.",
-            "- If no posts are found, return {\"posts\":[]}.",
-            `Goal context: ${goal}`,
-            "Source HTML:",
-            htmlForModel,
-          ].join("\n"),
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "parsed_posts_html",
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              posts: {
-                type: "array",
-                items: {
-                  type: "object",
-                  additionalProperties: false,
-                  properties: {
-                    timestamp: { type: "string" },
-                    content: { type: "string" },
+    const completion = (await withTimeout(
+      client.chat.completions.create({
+        model: env.openaiModel,
+        messages: [
+          {
+            role: "system",
+            content:
+              "Extract feed/post entries from HTML. Prefer article/card/feed items and keep wording close to source text without unnecessary paraphrase.",
+          },
+          {
+            role: "user",
+            content: [
+              "Return JSON object: {\"posts\": [{\"timestamp\": string, \"content\": string}]}",
+              "Rules:",
+              "- Use visible content from the HTML (avoid script/style/meta/json blobs).",
+              "- Include as many distinct posts as reliably identifiable.",
+              "- Include a relative timestamp label copied from source (examples: `1d`, `1h`, `30m`).",
+              "- Do not extract or infer titles.",
+              "- If a post has no clear relative timestamp label, omit it.",
+              "- If no posts are found, return {\"posts\":[]}.",
+              `Goal context: ${goal}`,
+              "Source HTML:",
+              htmlForModel,
+            ].join("\n"),
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "parsed_posts_html",
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                posts: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      timestamp: { type: "string" },
+                      content: { type: "string" },
+                    },
+                    required: ["timestamp", "content"],
                   },
-                  required: ["timestamp", "content"],
                 },
               },
+              required: ["posts"],
             },
-            required: ["posts"],
+            strict: true,
           },
-          strict: true,
         },
-      },
-      max_tokens: 1600,
-    })) as {
+        max_tokens: 1600,
+      }),
+      env.aiTimeoutMs,
+      "parse posts from html",
+    )) as {
       choices?: Array<{ message?: { content?: string | null } }>;
     };
 

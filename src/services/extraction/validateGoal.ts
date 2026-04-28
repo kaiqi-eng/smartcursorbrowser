@@ -1,6 +1,7 @@
 import { env } from "../../config/env";
 import type { ScrapeResult } from "../../types/job";
 import { getOpenAIClient } from "../ai/openaiClient";
+import { withTimeout } from "../../utils/timeout";
 
 type GoalAssessment = NonNullable<ScrapeResult["goalAssessment"]>;
 type GoalValidationPayload = NonNullable<ScrapeResult["validationPayload"]>;
@@ -61,42 +62,46 @@ export async function validateGoalAgainstExtraction(params: {
   const payload = buildValidationPayload(params);
   const client = getOpenAIClient();
   try {
-    const completion = (await client.chat.completions.create({
-      model: env.openaiModel,
-      messages: [
-        {
-          role: "system",
-          content:
-            "You are a strict extraction validator. Determine whether scraped output satisfies the user goal. Be conservative, but do not fail a feed extraction solely because post text is truncated or includes locked-content banners.",
-        },
-        {
-          role: "user",
-          content: JSON.stringify(payload, null, 2),
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "goal_assessment",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              meetsGoal: { type: "boolean" },
-              confidence: { type: "string", enum: ["low", "medium", "high"] },
-              reason: { type: "string" },
-              missingRequirements: {
-                type: "array",
-                items: { type: "string" },
+    const completion = (await withTimeout(
+      client.chat.completions.create({
+        model: env.openaiModel,
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a strict extraction validator. Determine whether scraped output satisfies the user goal. Be conservative, but do not fail a feed extraction solely because post text is truncated or includes locked-content banners.",
+          },
+          {
+            role: "user",
+            content: JSON.stringify(payload, null, 2),
+          },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "goal_assessment",
+            strict: true,
+            schema: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                meetsGoal: { type: "boolean" },
+                confidence: { type: "string", enum: ["low", "medium", "high"] },
+                reason: { type: "string" },
+                missingRequirements: {
+                  type: "array",
+                  items: { type: "string" },
+                },
               },
+              required: ["meetsGoal", "confidence", "reason", "missingRequirements"],
             },
-            required: ["meetsGoal", "confidence", "reason", "missingRequirements"],
           },
         },
-      },
-      max_tokens: 450,
-    })) as { choices?: Array<{ message?: { content?: string | null } }> };
+        max_tokens: 450,
+      }),
+      env.aiTimeoutMs,
+      "goal validation",
+    )) as { choices?: Array<{ message?: { content?: string | null } }> };
 
     const content = completion.choices?.[0]?.message?.content?.trim();
     if (!content) {

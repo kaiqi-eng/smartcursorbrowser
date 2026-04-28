@@ -15,6 +15,7 @@ import { runOxylabsFallback } from "../services/fallback/oxylabsFallback";
 import { JobStore } from "../services/jobStore";
 import { maskError } from "../services/security/redaction";
 import type { ActionContext, JobTraceEvent } from "../types/job";
+import { withTimeout } from "../utils/timeout";
 
 const MAX_ACTION_RETRIES = 3;
 const SNAPSHOT_RETRIES = 3;
@@ -235,8 +236,16 @@ export function createScrapeWorker(jobStore: JobStore) {
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
 
     try {
-      session = await createBrowserSession(job.request.userAgent);
-      await session.page.goto(job.request.url, { waitUntil: "domcontentloaded" });
+      session = await withTimeout(
+        createBrowserSession(job.request.userAgent),
+        env.extractionTimeoutMs,
+        "create browser session",
+      );
+      await withTimeout(
+        session.page.goto(job.request.url, { waitUntil: "domcontentloaded" }),
+        env.extractionTimeoutMs,
+        "initial page navigation",
+      );
 
       if (job.request.sourceType === "otter") {
         if ((job.request.loginFields?.length ?? 0) === 0) {
@@ -244,14 +253,16 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
 
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
-        await performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []);
+        await withTimeout(
+          performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []),
+          env.extractionTimeoutMs,
+          "otter login flow",
+        );
 
-        const result = await extractResult(
-          session.page,
-          trace,
-          job.request.extractionSchema,
-          job.request.goal,
-          "otter",
+        const result = await withTimeout(
+          extractResult(session.page, trace, job.request.extractionSchema, job.request.goal, "otter"),
+          env.extractionTimeoutMs,
+          "otter extraction",
         );
 
         jobStore.setResult(jobId, result);
@@ -319,7 +330,7 @@ export function createScrapeWorker(jobStore: JobStore) {
             screenshotBase64: env.enableLiveScreenshots ? context.screenshotBase64 : undefined,
           });
 
-          let action = await getNextAction(context, trace);
+          let action = await withTimeout(getNextAction(context, trace), env.aiTimeoutMs, "next action planning");
           const hasLoginFields = (job.request.loginFields?.length ?? 0) > 0;
 
           if (hasLoginFields && (action.type === "done" || action.type === "extract")) {
@@ -395,12 +406,16 @@ export function createScrapeWorker(jobStore: JobStore) {
 
           if (shouldStop(action, step, maxSteps, startedAtMs, timeoutMs)) {
             if (action.type === "done" || action.type === "extract") {
-              const interimResult = await extractResult(
-                session.page,
-                trace,
-                job.request.extractionSchema,
-                job.request.goal,
-                job.request.sourceType ?? "generic",
+              const interimResult = await withTimeout(
+                extractResult(
+                  session.page,
+                  trace,
+                  job.request.extractionSchema,
+                  job.request.goal,
+                  job.request.sourceType ?? "generic",
+                ),
+                env.extractionTimeoutMs,
+                "interim extraction",
               );
               jobStore.setValidationPayload(jobId, interimResult.validationPayload);
 
@@ -489,12 +504,16 @@ export function createScrapeWorker(jobStore: JobStore) {
       if (goalSatisfiedEarly) {
         jobStore.updateStatus(jobId, "succeeded", "Scrape completed");
       } else {
-        const result = await extractResult(
-          session.page,
-          trace,
-          job.request.extractionSchema,
-          job.request.goal,
-          job.request.sourceType ?? "generic",
+        const result = await withTimeout(
+          extractResult(
+            session.page,
+            trace,
+            job.request.extractionSchema,
+            job.request.goal,
+            job.request.sourceType ?? "generic",
+          ),
+          env.extractionTimeoutMs,
+          "final extraction",
         );
 
         if (result.goalAssessment && result.goalAssessment.meetsGoal) {
@@ -528,7 +547,7 @@ export function createScrapeWorker(jobStore: JobStore) {
       await attemptFallback(jobId, job.request.url, jobStore);
     } finally {
       if (session) {
-        await closeBrowserSession(session);
+        await withTimeout(closeBrowserSession(session), env.teardownTimeoutMs, "close browser session");
       }
     }
   };
