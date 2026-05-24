@@ -20,10 +20,10 @@ export const env = {
   openaiApiKey: process.env.OPENAI_API_KEY ?? "",
   openaiModel: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   maxJobSteps: toNum(process.env.MAX_JOB_STEPS, 25),
-  defaultJobTimeoutMs: Math.max(1_800_000, toNum(process.env.JOB_TIMEOUT_MS, 1_800_000)),
-  aiTimeoutMs: Math.max(1_800_000, toNum(process.env.AI_TIMEOUT_MS, 1_800_000)),
-  extractionTimeoutMs: Math.max(1_800_000, toNum(process.env.EXTRACTION_TIMEOUT_MS, 1_800_000)),
-  teardownTimeoutMs: Math.max(1_800_000, toNum(process.env.TEARDOWN_TIMEOUT_MS, 1_800_000)),
+  defaultJobTimeoutMs: Math.max(30_000, toNum(process.env.JOB_TIMEOUT_MS, 120_000)),
+  aiTimeoutMs: Math.max(15_000, toNum(process.env.AI_TIMEOUT_MS, 60_000)),
+  extractionTimeoutMs: Math.max(15_000, toNum(process.env.EXTRACTION_TIMEOUT_MS, 120_000)),
+  teardownTimeoutMs: Math.max(5_000, toNum(process.env.TEARDOWN_TIMEOUT_MS, 30_000)),
   browserHeadless: toBool(process.env.BROWSER_HEADLESS, true),
 
   // Memory optimization flags (safe defaults)
@@ -34,6 +34,10 @@ export const env = {
   finishedJobTtlMs: Math.max(60_000, toNum(process.env.FINISHED_JOB_TTL_MS, 10 * 60 * 1000)),
   cleanupIntervalMs: Math.max(30_000, toNum(process.env.CLEANUP_INTERVAL_MS, 60_000)),
   blockHeavyResources: toBool(process.env.BLOCK_HEAVY_RESOURCES, true),
+  memoryGuardEnabled: toBool(process.env.MEMORY_GUARD_ENABLED, true),
+  memoryGuardRssMb: Math.max(128, toNum(process.env.MEMORY_GUARD_RSS_MB, 430)),
+  memoryGuardMaxRetries: Math.max(0, toNum(process.env.MEMORY_GUARD_MAX_RETRIES, 2)),
+  memoryGuardCooldownMs: Math.max(500, toNum(process.env.MEMORY_GUARD_COOLDOWN_MS, 2000)),
 
   // Oxylabs fallback credentials — use OXYLABS_USERNAME / OXYLABS_PASSWORD in .env
   oxylabsUsername: process.env.OXYLABS_USERNAME ?? "",

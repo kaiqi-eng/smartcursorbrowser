@@ -22,6 +22,18 @@ const SNAPSHOT_RETRIES = 3;
 const MAX_TEMP_RESTRICTED_DONE_RETRIES = 3;
 const SCREENSHOT_TIMEOUT_MS = 8000;
 
+export function getRssMb(): number {
+  return Math.round(process.memoryUsage().rss / (1024 * 1024));
+}
+
+export function isMemoryExceeded(rssMb = getRssMb()): boolean {
+  return env.memoryGuardEnabled && rssMb >= env.memoryGuardRssMb;
+}
+
+function formatMemoryGuardMessage(rssMb: number): string {
+  return `memory_guard_triggered rss=${rssMb}mb threshold=${env.memoryGuardRssMb}mb`;
+}
+
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
     return false;
@@ -230,10 +242,62 @@ export function createScrapeWorker(jobStore: JobStore) {
     let tempRestrictedDoneCount = 0;
     let confirmedLoggedIn = false;
     let validationRetryStreak = 0;
+    let memoryGuardRetryCount = 0;
 
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
     let session: Awaited<ReturnType<typeof createBrowserSession>> | null = null;
+
+    const handleMemoryGuard = async (
+      stage: "post_session_start" | "step_start" | "before_capture" | "before_action_execute",
+      step: number,
+    ): Promise<"ok" | "recovered" | "terminal"> => {
+      const rssMb = getRssMb();
+      if (!isMemoryExceeded(rssMb)) {
+        return "ok";
+      }
+
+      memoryGuardRetryCount += 1;
+      const guardMessage = formatMemoryGuardMessage(rssMb);
+      const progressMessage = `${guardMessage} stage=${stage} step=${step} retry=${memoryGuardRetryCount}/${env.memoryGuardMaxRetries}`;
+      console.log(progressMessage);
+      jobStore.updateProgress(jobId, step, progressMessage);
+
+      if (session) {
+        try {
+          await closeBrowserSession(session);
+        } catch {
+          // ignore close errors during guard recovery
+        }
+        session = null;
+      }
+
+      if (memoryGuardRetryCount > env.memoryGuardMaxRetries) {
+        if (job.request.sourceType === "otter") {
+          jobStore.setError(jobId, `${guardMessage} retries_exhausted=true`);
+          jobStore.updateStatus(jobId, "failed", "Otter extraction failed");
+          return "terminal";
+        }
+
+        await attemptFallback(jobId, job.request.url, jobStore);
+        return "terminal";
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, env.memoryGuardCooldownMs));
+      session = await withTimeout(
+        createBrowserSession(job.request.userAgent),
+        env.extractionTimeoutMs,
+        "recreate browser session after memory guard",
+      );
+      await withTimeout(
+        session.page.goto(job.request.url, { waitUntil: "domcontentloaded" }),
+        env.extractionTimeoutMs,
+        "recover navigation after memory guard",
+      );
+      confirmedLoggedIn = false;
+      carryOverError = `${guardMessage}; session restarted`;
+      return "recovered";
+    };
 
     try {
       session = await withTimeout(
@@ -246,10 +310,19 @@ export function createScrapeWorker(jobStore: JobStore) {
         env.extractionTimeoutMs,
         "initial page navigation",
       );
+      const sessionStartGuard = await handleMemoryGuard("post_session_start", 0);
+      if (sessionStartGuard === "terminal") {
+        return;
+      }
 
       if (job.request.sourceType === "otter") {
         if ((job.request.loginFields?.length ?? 0) === 0) {
           throw new Error("Otter jobs require login credentials");
+        }
+
+        const otterPreLoginGuard = await handleMemoryGuard("before_capture", 0);
+        if (otterPreLoginGuard === "terminal") {
+          return;
         }
 
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
@@ -258,6 +331,11 @@ export function createScrapeWorker(jobStore: JobStore) {
           env.extractionTimeoutMs,
           "otter login flow",
         );
+
+        const otterPreExtractGuard = await handleMemoryGuard("before_action_execute", 0);
+        if (otterPreExtractGuard === "terminal") {
+          return;
+        }
 
         const result = await withTimeout(
           extractResult(session.page, trace, job.request.extractionSchema, job.request.goal, "otter"),
@@ -298,12 +376,26 @@ export function createScrapeWorker(jobStore: JobStore) {
           jobStore.updateStatus(jobId, "cancelled", "Job cancelled");
           return;
         }
+        const stepStartGuard = await handleMemoryGuard("step_start", step);
+        if (stepStartGuard === "terminal") {
+          return;
+        }
 
         let shouldEnd = false;
         let stepExecutionFailed = false;
+        let retrySameStep = false;
         let retryError = carryOverError;
 
         for (let attempt = 1; attempt <= MAX_ACTION_RETRIES; attempt += 1) {
+          const preCaptureGuard = await handleMemoryGuard("before_capture", step);
+          if (preCaptureGuard === "terminal") {
+            return;
+          }
+          if (preCaptureGuard === "recovered") {
+            retrySameStep = true;
+            break;
+          }
+
           const includeScreenshot = shouldCaptureScreenshot(step, retryError);
           const stepContext = await captureStepContext(session.page, includeScreenshot);
 
@@ -452,6 +544,14 @@ export function createScrapeWorker(jobStore: JobStore) {
           }
 
           try {
+            const preActionGuard = await handleMemoryGuard("before_action_execute", step);
+            if (preActionGuard === "terminal") {
+              return;
+            }
+            if (preActionGuard === "recovered") {
+              retrySameStep = true;
+              break;
+            }
             await executeBrowserAction(session.page, action, job.request.loginFields ?? []);
             retryError = undefined;
             carryOverError = undefined;
@@ -494,6 +594,11 @@ export function createScrapeWorker(jobStore: JobStore) {
 
         if (shouldEnd) {
           break;
+        }
+
+        if (retrySameStep) {
+          step -= 1;
+          continue;
         }
 
         if (stepExecutionFailed) {
