@@ -108,7 +108,7 @@ async function fillIfVisible(page: Page, selectors: string[], value: string): Pr
 
 async function waitForPasswordStep(loginPage: Page): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    if (await hasVisiblePasswordInput(loginPage)) {
+    if (loginPage.url().includes("/password") || (await hasVisiblePasswordInput(loginPage))) {
       return;
     }
     await clickIfVisible(loginPage, [
@@ -124,7 +124,16 @@ async function waitForPasswordStep(loginPage: Page): Promise<void> {
     } catch {
       // Some views may not focus an input; keep retrying.
     }
-    await loginPage.waitForTimeout(1000);
+    try {
+      await loginPage.waitForURL(/\/password(?:[/?#]|$)/i, { timeout: 2000 });
+      return;
+    } catch {
+      // URL did not update yet; continue trying.
+    }
+    if (loginPage.url().includes("/password") || (await hasVisiblePasswordInput(loginPage))) {
+      return;
+    }
+    await loginPage.waitForTimeout(800);
   }
 }
 
