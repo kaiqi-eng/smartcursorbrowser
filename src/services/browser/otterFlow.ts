@@ -11,33 +11,68 @@ function getLoginValue(fields: LoginFieldInput[], key: "email" | "password"): st
 
 async function clickIfVisible(page: Page, selectors: string[]): Promise<boolean> {
   for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if ((await locator.count()) === 0) {
+    const locator = page.locator(selector);
+    const count = await locator.count();
+    if (count === 0) {
       continue;
     }
-    try {
-      await locator.click({ timeout: 2500 });
-      return true;
-    } catch {
+    for (let i = 0; i < count; i += 1) {
+      const candidate = locator.nth(i);
       try {
-        await locator.click({ timeout: 2500, force: true });
+        if (!(await candidate.isVisible())) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      try {
+        await candidate.click({ timeout: 2500 });
         return true;
       } catch {
         try {
-          const domClicked = await page.evaluate((value) => {
-            const element = document.querySelector<HTMLElement>(value);
-            if (!element) {
-              return false;
-            }
-            element.click();
-            return true;
-          }, selector);
-          if (domClicked) {
-            return true;
-          }
+          await candidate.click({ timeout: 2500, force: true });
+          return true;
         } catch {
-          // Try next selector.
+          try {
+            const domClicked = await page.evaluate((value) => {
+              const element = document.querySelector<HTMLElement>(value);
+              if (!element) {
+                return false;
+              }
+              element.click();
+              return true;
+            }, selector);
+            if (domClicked) {
+              return true;
+            }
+          } catch {
+            // Try next selector candidate.
+          }
         }
+      }
+    }
+  }
+  return false;
+}
+
+async function hasVisiblePasswordInput(page: Page): Promise<boolean> {
+  const locators = [
+    page.locator("input[type='password']"),
+    page.locator("input[placeholder*='password' i]"),
+    page.locator("input[aria-label*='password' i]"),
+    page.locator("input[name*='password' i]"),
+    page.locator("input[id*='password' i]"),
+  ];
+
+  for (const locator of locators) {
+    const count = await locator.count();
+    for (let i = 0; i < count; i += 1) {
+      try {
+        if (await locator.nth(i).isVisible()) {
+          return true;
+        }
+      } catch {
+        // Continue scanning candidates.
       }
     }
   }
@@ -46,18 +81,51 @@ async function clickIfVisible(page: Page, selectors: string[]): Promise<boolean>
 
 async function fillIfVisible(page: Page, selectors: string[], value: string): Promise<boolean> {
   for (const selector of selectors) {
-    const locator = page.locator(selector).first();
-    if ((await locator.count()) === 0) {
+    const locator = page.locator(selector);
+    const count = await locator.count();
+    if (count === 0) {
       continue;
     }
-    try {
-      await locator.fill(value, { timeout: 5000 });
-      return true;
-    } catch {
-      // Try next selector.
+    for (let i = 0; i < count; i += 1) {
+      const candidate = locator.nth(i);
+      try {
+        if (!(await candidate.isVisible())) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+      try {
+        await candidate.fill(value, { timeout: 5000 });
+        return true;
+      } catch {
+        // Try next selector candidate.
+      }
     }
   }
   return false;
+}
+
+async function waitForPasswordStep(loginPage: Page): Promise<void> {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (await hasVisiblePasswordInput(loginPage)) {
+      return;
+    }
+    await clickIfVisible(loginPage, [
+      "button:has-text('Sign in')",
+      "button:has-text('Sign In')",
+      "button:has-text('Next')",
+      "[role='button']:has-text('Sign in')",
+      "[role='button']:has-text('Sign In')",
+      "[role='button']:has-text('Next')",
+    ]);
+    try {
+      await loginPage.keyboard.press("Enter");
+    } catch {
+      // Some views may not focus an input; keep retrying.
+    }
+    await loginPage.waitForTimeout(1000);
+  }
 }
 
 async function performPopupLogin(loginPage: Page, email: string, password: string): Promise<void> {
@@ -71,6 +139,11 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
       "button:has-text('Other ways to log in')",
       "[role='button']:has-text('Other ways to log in')",
       "text=Other ways to log in",
+    ]);
+    await clickIfVisible(loginPage, [
+      "button:has-text('Reject All')",
+      "button:has-text('Accept All Cookies')",
+      "button:has-text('Accept All')",
     ]);
     await loginPage.waitForTimeout(900);
 
@@ -94,13 +167,7 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
     throw new Error("Unable to locate Otter email input");
   }
 
-  await clickIfVisible(loginPage, [
-    "button:has-text('Sign in')",
-    "button:has-text('Next')",
-    "[role='button']:has-text('Sign in')",
-    "[role='button']:has-text('Next')",
-  ]);
-  await loginPage.waitForTimeout(1200);
+  await waitForPasswordStep(loginPage);
 
   const passwordFilled = await fillIfVisible(
     loginPage,
@@ -120,6 +187,7 @@ async function performPopupLogin(loginPage: Page, email: string, password: strin
   await clickIfVisible(loginPage, [
     "button:has-text('Next')",
     "button:has-text('Sign in')",
+    "button:has-text('Sign In')",
     "[role='button']:has-text('Next')",
   ]);
   await loginPage.waitForTimeout(2200);
