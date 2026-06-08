@@ -35,6 +35,12 @@ const CONTINUE_BUTTONS = [
   "[role='button']:has-text('Next')",
 ];
 
+const EMAIL_SUBMIT_BUTTONS = [
+  "button[type='submit']",
+  "[role='button'][type='submit']",
+  ...CONTINUE_BUTTONS,
+];
+
 const COOKIE_BANNER_BUTTONS = [
   "button:has-text('Reject All')",
   "button:has-text('Accept All Cookies')",
@@ -154,18 +160,42 @@ async function ensureCredentialsMode(page: Page): Promise<void> {
 
 async function submitAndAwaitPasswordStep(page: Page): Promise<void> {
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    if (await waitForAnyVisible(page, PASSWORD_SELECTORS, 1200)) {
+    if (page.url().includes("/password") || (await waitForAnyVisible(page, PASSWORD_SELECTORS, 1200))) {
       return;
     }
 
-    await clickFirstInteractable(page, CONTINUE_BUTTONS);
+    await dismissCookieBannerIfPresent(page);
+
+    const emailInput = page
+      .locator(
+        "input[name='email'], input[type='email'], input[placeholder*='email' i], input[aria-label*='email' i], input[id*='email' i]",
+      )
+      .first();
+
+    try {
+      if ((await emailInput.count()) > 0) {
+        await emailInput.click({ timeout: 1200 });
+        await emailInput.press("Enter", { timeout: 1200 });
+      }
+    } catch {
+      // Keep trying alternative submit actions.
+    }
+
+    await clickFirstInteractable(page, EMAIL_SUBMIT_BUTTONS);
     try {
       await page.keyboard.press("Enter");
     } catch {
       // Ignore enter-key errors if no active element.
     }
 
-    if (await waitForAnyVisible(page, PASSWORD_SELECTORS, 1800)) {
+    try {
+      await page.waitForURL(/\/password(?:[/?#]|$)/i, { timeout: 1500 });
+      return;
+    } catch {
+      // URL didn't change; continue with DOM checks.
+    }
+
+    if (page.url().includes("/password") || (await waitForAnyVisible(page, PASSWORD_SELECTORS, 2200))) {
       return;
     }
   }

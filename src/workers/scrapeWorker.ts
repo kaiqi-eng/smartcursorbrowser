@@ -21,6 +21,8 @@ const MAX_ACTION_RETRIES = 3;
 const SNAPSHOT_RETRIES = 3;
 const MAX_TEMP_RESTRICTED_DONE_RETRIES = 3;
 const SCREENSHOT_TIMEOUT_MS = 8000;
+const OTTER_DEBUG_TEXT_LIMIT = 2000;
+const OTTER_DEBUG_BUTTON_LIMIT = 12;
 
 function isTransientContextError(error: unknown): boolean {
   if (!(error instanceof Error)) {
@@ -68,6 +70,89 @@ function isTemporaryRestrictedDoneAction(action: { type: string; reason?: string
     reason.includes("access is temporarily restricted") ||
     reason.includes("temporarily restricted")
   );
+}
+
+async function captureOtterDebugSnapshot(
+  page: Awaited<ReturnType<typeof createBrowserSession>>["page"],
+): Promise<{
+  url: string;
+  title: string;
+  textSnippet: string;
+  hasVisibleEmailInput: boolean;
+  hasVisiblePasswordInput: boolean;
+  visibleButtons: string[];
+  screenshotBase64?: string;
+  screenshotBytes?: number;
+}> {
+  const domSnapshot = await page.evaluate(
+    ({ textLimit, buttonLimit }) => {
+      const isVisible = (element: Element): boolean => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        return !!(element.offsetParent || element.getClientRects().length);
+      };
+
+      const textSnippet = (document.body?.innerText ?? "").slice(0, textLimit);
+
+      const hasVisibleEmailInput = Array.from(document.querySelectorAll("input")).some((input) => {
+        const marker = `${input.getAttribute("name") ?? ""} ${input.getAttribute("id") ?? ""} ${
+          input.getAttribute("placeholder") ?? ""
+        } ${input.getAttribute("aria-label") ?? ""} ${input.getAttribute("autocomplete") ?? ""}`.toLowerCase();
+        return isVisible(input) && marker.includes("email");
+      });
+
+      const hasVisiblePasswordInput = Array.from(document.querySelectorAll("input")).some((input) => {
+        const type = (input.getAttribute("type") ?? "").toLowerCase();
+        const marker = `${type} ${input.getAttribute("name") ?? ""} ${input.getAttribute("id") ?? ""} ${
+          input.getAttribute("placeholder") ?? ""
+        } ${input.getAttribute("aria-label") ?? ""} ${input.getAttribute("autocomplete") ?? ""}`.toLowerCase();
+        return isVisible(input) && (type === "password" || marker.includes("password"));
+      });
+
+      const visibleButtons = Array.from(document.querySelectorAll("button,[role='button']"))
+        .filter((button) => isVisible(button))
+        .map((button) => (button.textContent ?? "").trim().replace(/\s+/g, " "))
+        .filter(Boolean)
+        .slice(0, buttonLimit);
+
+      return {
+        textSnippet,
+        hasVisibleEmailInput,
+        hasVisiblePasswordInput,
+        visibleButtons,
+      };
+    },
+    { textLimit: OTTER_DEBUG_TEXT_LIMIT, buttonLimit: OTTER_DEBUG_BUTTON_LIMIT },
+  );
+
+  let screenshotBase64: string | undefined;
+  let screenshotBytes: number | undefined;
+  try {
+    const screenshot = await page.screenshot({
+      type: "jpeg",
+      quality: 55,
+      fullPage: false,
+      timeout: SCREENSHOT_TIMEOUT_MS,
+      animations: "disabled",
+      caret: "hide",
+    });
+    screenshotBytes = screenshot.byteLength;
+    screenshotBase64 = screenshot.toString("base64");
+  } catch {
+    // Leave screenshot empty if capture fails.
+  }
+
+  return {
+    url: page.url(),
+    title: await page.title(),
+    textSnippet: domSnapshot.textSnippet,
+    hasVisibleEmailInput: domSnapshot.hasVisibleEmailInput,
+    hasVisiblePasswordInput: domSnapshot.hasVisiblePasswordInput,
+    visibleButtons: domSnapshot.visibleButtons,
+    screenshotBase64,
+    screenshotBytes,
+  };
 }
 
 async function captureStepContext(
@@ -536,6 +621,31 @@ export function createScrapeWorker(jobStore: JobStore) {
 
       if (job.request.sourceType === "otter") {
         console.log(`Otter job failed: ${errMsg}`);
+
+        if (session) {
+          try {
+            const debugSnapshot = await captureOtterDebugSnapshot(session.page);
+            jobStore.updateLiveView(jobId, {
+              currentUrl: debugSnapshot.url,
+              pageTitle: debugSnapshot.title,
+              screenshotBase64: debugSnapshot.screenshotBase64,
+            });
+            console.log(
+              `[OTTER_DEBUG] ${JSON.stringify({
+                jobId,
+                url: debugSnapshot.url,
+                title: debugSnapshot.title,
+                textSnippet: debugSnapshot.textSnippet,
+                hasVisibleEmailInput: debugSnapshot.hasVisibleEmailInput,
+                hasVisiblePasswordInput: debugSnapshot.hasVisiblePasswordInput,
+                visibleButtons: debugSnapshot.visibleButtons,
+                screenshotBytes: debugSnapshot.screenshotBytes ?? 0,
+              })}`,
+            );
+          } catch (debugError) {
+            console.log(`Otter debug snapshot failed: ${maskError(debugError)}`);
+          }
+        }
 
         if (session) {
           try {
