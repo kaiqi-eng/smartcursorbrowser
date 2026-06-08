@@ -13,8 +13,8 @@ import { extractResult } from "../services/extraction/extract";
 import { shouldStop } from "../services/extraction/stopCriteria";
 import { runOxylabsFallback } from "../services/fallback/oxylabsFallback";
 import { JobStore } from "../services/jobStore";
-import { maskError } from "../services/security/redaction";
-import type { ActionContext, JobTraceEvent } from "../types/job";
+import { maskError, redactText } from "../services/security/redaction";
+import type { ActionContext, JobTraceEvent, LoginFieldInput } from "../types/job";
 import { withTimeout } from "../utils/timeout";
 
 const MAX_ACTION_RETRIES = 3;
@@ -70,6 +70,37 @@ function isTemporaryRestrictedDoneAction(action: { type: string; reason?: string
     reason.includes("access is temporarily restricted") ||
     reason.includes("temporarily restricted")
   );
+}
+
+function getLoginFieldValue(
+  fields: Array<{ name: string; value: string }> | undefined,
+  key: "email" | "password",
+): string {
+  return fields?.find((field) => field.name.toLowerCase().includes(key))?.value ?? "";
+}
+
+function maskEmail(value: string): string {
+  const trimmed = value.trim();
+  const atIndex = trimmed.indexOf("@");
+  if (atIndex <= 0 || atIndex === trimmed.length - 1) {
+    return redactText(trimmed || "[empty]", 2);
+  }
+
+  const local = trimmed.slice(0, atIndex);
+  const domain = trimmed.slice(atIndex + 1);
+  const localHead = local.charAt(0) || "*";
+  const domainHead = domain.charAt(0) || "*";
+  return `${localHead}***@${domainHead}***`;
+}
+
+function resolveOtterLoginFields(jobLoginFields: LoginFieldInput[]): LoginFieldInput[] {
+  if (env.otterLoginEmail && env.otterLoginPassword) {
+    return [
+      { name: "email", value: env.otterLoginEmail, secret: true },
+      { name: "password", value: env.otterLoginPassword, secret: true },
+    ];
+  }
+  return jobLoginFields;
 }
 
 async function captureOtterDebugSnapshot(
@@ -315,6 +346,7 @@ export function createScrapeWorker(jobStore: JobStore) {
     let tempRestrictedDoneCount = 0;
     let confirmedLoggedIn = false;
     let validationRetryStreak = 0;
+    let effectiveOtterLoginFields: LoginFieldInput[] = job.request.loginFields ?? [];
 
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
@@ -333,13 +365,14 @@ export function createScrapeWorker(jobStore: JobStore) {
       );
 
       if (job.request.sourceType === "otter") {
-        if ((job.request.loginFields?.length ?? 0) === 0) {
+        effectiveOtterLoginFields = resolveOtterLoginFields(job.request.loginFields ?? []);
+        if (effectiveOtterLoginFields.length === 0) {
           throw new Error("Otter jobs require login credentials");
         }
 
         jobStore.updateProgress(jobId, 0, "Logging in to Otter");
         await withTimeout(
-          performOtterLoginFlow(session.page, job.request.url, job.request.loginFields ?? []),
+          performOtterLoginFlow(session.page, job.request.url, effectiveOtterLoginFields),
           env.extractionTimeoutMs,
           "otter login flow",
         );
@@ -635,6 +668,20 @@ export function createScrapeWorker(jobStore: JobStore) {
                 jobId,
                 url: debugSnapshot.url,
                 title: debugSnapshot.title,
+                credentials: {
+                  source:
+                    env.otterLoginEmail && env.otterLoginPassword ? "env-override" : "request-payload",
+                  maskedEmail: maskEmail(getLoginFieldValue(effectiveOtterLoginFields, "email")),
+                  maskedPassword: redactText(getLoginFieldValue(effectiveOtterLoginFields, "password"), 2),
+                  emailLength: getLoginFieldValue(effectiveOtterLoginFields, "email").length,
+                  passwordLength: getLoginFieldValue(effectiveOtterLoginFields, "password").length,
+                  emailChangedByTrim:
+                    getLoginFieldValue(effectiveOtterLoginFields, "email") !==
+                    getLoginFieldValue(effectiveOtterLoginFields, "email").trim(),
+                  passwordChangedByTrim:
+                    getLoginFieldValue(effectiveOtterLoginFields, "password") !==
+                    getLoginFieldValue(effectiveOtterLoginFields, "password").trim(),
+                },
                 textSnippet: debugSnapshot.textSnippet,
                 hasVisibleEmailInput: debugSnapshot.hasVisibleEmailInput,
                 hasVisiblePasswordInput: debugSnapshot.hasVisiblePasswordInput,

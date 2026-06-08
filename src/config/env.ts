@@ -35,6 +35,10 @@ export const env = {
   cleanupIntervalMs: Math.max(30_000, toNum(process.env.CLEANUP_INTERVAL_MS, 60_000)),
   blockHeavyResources: toBool(process.env.BLOCK_HEAVY_RESOURCES, true),
 
+  // Optional Otter credential override (used for sourceType=otter jobs)
+  otterLoginEmail: (process.env.OTTER_LOGIN_EMAIL ?? "").trim(),
+  otterLoginPassword: (process.env.OTTER_LOGIN_PASSWORD ?? "").trim(),
+
   // Oxylabs fallback credentials — use OXYLABS_USERNAME / OXYLABS_PASSWORD in .env
   oxylabsUsername: process.env.OXYLABS_USERNAME ?? "",
   oxylabsPassword: process.env.OXYLABS_PASSWORD ?? "",
