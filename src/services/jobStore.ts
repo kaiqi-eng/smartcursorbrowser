@@ -102,7 +102,7 @@ export class JobStore {
   private dispatchCompletionWebhook(job: JobRecord): void {
     const webhookUrl = job.request.webhookUrl;
     // Webhooks are only supported for generic scrape jobs created via POST /jobs.
-    if (job.request.sourceType === "otter") {
+    if (job.request.sourceType === "otter" || job.request.sourceType === "loom") {
       return;
     }
 

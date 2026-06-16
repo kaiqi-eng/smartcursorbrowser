@@ -19,7 +19,7 @@ export interface ScrapeJobRequest {
   extractionSchema?: Record<string, string>;
   loginFields?: LoginFieldInput[];
   webhookUrl?: string;
-  sourceType?: "generic" | "otter";
+  sourceType?: "generic" | "otter" | "loom";
   maxSteps?: number;
   timeoutMs?: number;
   userAgent?: string;

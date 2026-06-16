@@ -57,4 +57,42 @@ describe("scrapeWorker", () => {
     expect(updatedJob?.error).toContain("browser unavailable");
     expect(updatedJob?.result).toBeUndefined();
   });
+
+  it("fails Loom jobs directly instead of invoking Oxylabs fallback", async () => {
+    const jobStore = new JobStore();
+    const now = new Date().toISOString();
+    const job: JobRecord = {
+      id: "loom-job",
+      status: "queued",
+      request: {
+        url: "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+        goal: "Extract transcript and summary from the Loom video page.",
+        sourceType: "loom",
+        loginFields: [
+          { name: "email", value: "user@example.com", secret: true },
+          { name: "password", value: "password123", secret: true },
+        ],
+      },
+      createdAt: now,
+      updatedAt: now,
+      progress: {
+        step: 0,
+        maxSteps: 8,
+        message: "Queued",
+      },
+      cancelRequested: false,
+    };
+
+    jobStore.create(job);
+    vi.mocked(createBrowserSession).mockRejectedValue(new Error("browser unavailable"));
+
+    await createScrapeWorker(jobStore)("loom-job");
+
+    const updatedJob = jobStore.get("loom-job");
+    expect(runOxylabsFallback).not.toHaveBeenCalled();
+    expect(updatedJob?.status).toBe("failed");
+    expect(updatedJob?.progress.message).toBe("Loom extraction failed");
+    expect(updatedJob?.error).toContain("browser unavailable");
+    expect(updatedJob?.result).toBeUndefined();
+  });
 });

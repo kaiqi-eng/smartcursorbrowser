@@ -93,6 +93,37 @@ export const openApiSpec = {
         },
       },
     },
+    "/jobs/loom-transcript": {
+      post: {
+        summary: "Create Loom transcript extraction job",
+        description:
+          "Queues a deterministic Loom flow that logs in, retrieves transcript data, and builds a summary from the Loom description plus chapters. Credentials are accepted in request body and redacted in echoed response.",
+        security: [{ ApiKeyAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { $ref: "#/components/schemas/LoomTranscriptRequest" },
+              examples: {
+                loomTranscript: {
+                  summary: "Loom transcript extraction",
+                  value: {
+                    url: "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+                    email: "user@example.com",
+                    password: "correct-horse-battery-staple",
+                    maxSteps: 8,
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "202": { description: "Job accepted" },
+          "400": { description: "Invalid request payload" },
+        },
+      },
+    },
     "/jobs/{id}": {
       get: {
         summary: "Get job status",
@@ -185,6 +216,26 @@ export const openApiSpec = {
         required: ["url", "email", "password"],
         properties: {
           url: { type: "string", format: "uri", example: "https://otter.ai/u/example?tab=chat&view=transcript" },
+          email: { type: "string", format: "email", example: "user@example.com" },
+          password: {
+            type: "string",
+            format: "password",
+            minLength: 8,
+          },
+          maxSteps: { type: "integer", minimum: 1, maximum: 100, default: 8 },
+          timeoutMs: { type: "integer", minimum: 5000, maximum: 900000, default: 120000 },
+          userAgent: { type: "string", example: "Mozilla/5.0" },
+        },
+      },
+      LoomTranscriptRequest: {
+        type: "object",
+        required: ["url", "email", "password"],
+        properties: {
+          url: {
+            type: "string",
+            format: "uri",
+            example: "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+          },
           email: { type: "string", format: "email", example: "user@example.com" },
           password: {
             type: "string",

@@ -2,6 +2,7 @@ import { env } from "../../config/env";
 import type { Page } from "playwright";
 import type { JobTraceEvent, ScrapeResult } from "../../types/job";
 import { parsePostsFromRawText } from "./parsePosts";
+import { extractLoomSummaryAndTranscript } from "./loomExtract";
 import { extractOtterSummaryAndTranscript } from "./otterExtract";
 import { buildValidationPayload, validateGoalAgainstExtraction } from "./validateGoal";
 
@@ -232,7 +233,7 @@ export async function extractResult(
   trace: JobTraceEvent[],
   extractionSchema?: Record<string, string>,
   goal = "",
-  sourceType: "generic" | "otter" = "generic",
+  sourceType: "generic" | "otter" | "loom" = "generic",
 ): Promise<ScrapeResult> {
   const pageTitle = await page.title();
   const finalUrl = page.url();
@@ -253,6 +254,28 @@ export async function extractResult(
         reason: meetsGoal
           ? "Extracted summary or transcript from Otter page."
           : "Could not locate summary or transcript.",
+        missingRequirements: meetsGoal ? [] : ["summary or transcript"],
+      },
+      trace,
+    };
+  }
+
+  if (sourceType === "loom") {
+    const loomResult = await extractLoomSummaryAndTranscript(page);
+    const meetsGoal = Boolean(loomResult.summary || loomResult.transcript);
+
+    return {
+      finalUrl,
+      sourceUrl: finalUrl,
+      pageTitle,
+      summary: loomResult.summary,
+      transcript: loomResult.transcript,
+      goalAssessment: {
+        meetsGoal,
+        confidence: meetsGoal ? "high" : "low",
+        reason: meetsGoal
+          ? "Extracted summary or transcript from Loom video."
+          : "Could not locate Loom description, chapters, or transcript.",
         missingRequirements: meetsGoal ? [] : ["summary or transcript"],
       },
       trace,

@@ -7,6 +7,7 @@ import {
   isLikelyLoggedIn,
   navigateToLoginEntry,
 } from "../services/browser/loginFlow";
+import { performLoomLoginFlow } from "../services/browser/loomFlow";
 import { performOtterLoginFlow } from "../services/browser/otterFlow";
 import { closeBrowserSession, createBrowserSession } from "../services/browser/session";
 import { extractResult } from "../services/extraction/extract";
@@ -98,6 +99,16 @@ function resolveOtterLoginFields(jobLoginFields: LoginFieldInput[]): LoginFieldI
     return [
       { name: "email", value: env.otterLoginEmail, secret: true },
       { name: "password", value: env.otterLoginPassword, secret: true },
+    ];
+  }
+  return jobLoginFields;
+}
+
+function resolveLoomLoginFields(jobLoginFields: LoginFieldInput[]): LoginFieldInput[] {
+  if (env.loomLoginEmail && env.loomLoginPassword) {
+    return [
+      { name: "email", value: env.loomLoginEmail, secret: true },
+      { name: "password", value: env.loomLoginPassword, secret: true },
     ];
   }
   return jobLoginFields;
@@ -347,6 +358,7 @@ export function createScrapeWorker(jobStore: JobStore) {
     let confirmedLoggedIn = false;
     let validationRetryStreak = 0;
     let effectiveOtterLoginFields: LoginFieldInput[] = job.request.loginFields ?? [];
+    let effectiveLoomLoginFields: LoginFieldInput[] = job.request.loginFields ?? [];
 
     jobStore.updateStatus(jobId, "running", "Browser session starting");
 
@@ -395,6 +407,40 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
 
         jobStore.updateStatus(jobId, "succeeded", "Otter transcript extraction completed");
+        return;
+      }
+
+      if (job.request.sourceType === "loom") {
+        effectiveLoomLoginFields = resolveLoomLoginFields(job.request.loginFields ?? []);
+        if (effectiveLoomLoginFields.length === 0) {
+          throw new Error("Loom jobs require login credentials");
+        }
+
+        jobStore.updateProgress(jobId, 0, "Logging in to Loom");
+        await withTimeout(
+          performLoomLoginFlow(session.page, job.request.url, effectiveLoomLoginFields),
+          env.extractionTimeoutMs,
+          "loom login flow",
+        );
+
+        const result = await withTimeout(
+          extractResult(session.page, trace, job.request.extractionSchema, job.request.goal, "loom"),
+          env.extractionTimeoutMs,
+          "loom extraction",
+        );
+
+        jobStore.setResult(jobId, result);
+
+        if (!result.goalAssessment?.meetsGoal) {
+          jobStore.setError(
+            jobId,
+            `Goal validation failed (${result.goalAssessment?.confidence ?? "low"}): ${result.goalAssessment?.reason ?? "Loom extraction failed"}`,
+          );
+          jobStore.updateStatus(jobId, "failed", "Goal not satisfied");
+          return;
+        }
+
+        jobStore.updateStatus(jobId, "succeeded", "Loom transcript extraction completed");
         return;
       }
 
@@ -652,8 +698,11 @@ export function createScrapeWorker(jobStore: JobStore) {
     } catch (error) {
       const errMsg = maskError(error);
 
-      if (job.request.sourceType === "otter") {
-        console.log(`Otter job failed: ${errMsg}`);
+      if (job.request.sourceType === "otter" || job.request.sourceType === "loom") {
+        const providerName = job.request.sourceType === "otter" ? "Otter" : "Loom";
+        const effectiveLoginFields =
+          job.request.sourceType === "otter" ? effectiveOtterLoginFields : effectiveLoomLoginFields;
+        console.log(`${providerName} job failed: ${errMsg}`);
 
         if (session) {
           try {
@@ -664,23 +713,29 @@ export function createScrapeWorker(jobStore: JobStore) {
               screenshotBase64: debugSnapshot.screenshotBase64,
             });
             console.log(
-              `[OTTER_DEBUG] ${JSON.stringify({
+              `[${providerName.toUpperCase()}_DEBUG] ${JSON.stringify({
                 jobId,
                 url: debugSnapshot.url,
                 title: debugSnapshot.title,
                 credentials: {
                   source:
-                    env.otterLoginEmail && env.otterLoginPassword ? "env-override" : "request-payload",
-                  maskedEmail: maskEmail(getLoginFieldValue(effectiveOtterLoginFields, "email")),
-                  maskedPassword: redactText(getLoginFieldValue(effectiveOtterLoginFields, "password"), 2),
-                  emailLength: getLoginFieldValue(effectiveOtterLoginFields, "email").length,
-                  passwordLength: getLoginFieldValue(effectiveOtterLoginFields, "password").length,
+                    job.request.sourceType === "otter"
+                      ? env.otterLoginEmail && env.otterLoginPassword
+                        ? "env-override"
+                        : "request-payload"
+                      : env.loomLoginEmail && env.loomLoginPassword
+                        ? "env-override"
+                        : "request-payload",
+                  maskedEmail: maskEmail(getLoginFieldValue(effectiveLoginFields, "email")),
+                  maskedPassword: redactText(getLoginFieldValue(effectiveLoginFields, "password"), 2),
+                  emailLength: getLoginFieldValue(effectiveLoginFields, "email").length,
+                  passwordLength: getLoginFieldValue(effectiveLoginFields, "password").length,
                   emailChangedByTrim:
-                    getLoginFieldValue(effectiveOtterLoginFields, "email") !==
-                    getLoginFieldValue(effectiveOtterLoginFields, "email").trim(),
+                    getLoginFieldValue(effectiveLoginFields, "email") !==
+                    getLoginFieldValue(effectiveLoginFields, "email").trim(),
                   passwordChangedByTrim:
-                    getLoginFieldValue(effectiveOtterLoginFields, "password") !==
-                    getLoginFieldValue(effectiveOtterLoginFields, "password").trim(),
+                    getLoginFieldValue(effectiveLoginFields, "password") !==
+                    getLoginFieldValue(effectiveLoginFields, "password").trim(),
                 },
                 textSnippet: debugSnapshot.textSnippet,
                 hasVisibleEmailInput: debugSnapshot.hasVisibleEmailInput,
@@ -690,7 +745,7 @@ export function createScrapeWorker(jobStore: JobStore) {
               })}`,
             );
           } catch (debugError) {
-            console.log(`Otter debug snapshot failed: ${maskError(debugError)}`);
+            console.log(`${providerName} debug snapshot failed: ${maskError(debugError)}`);
           }
         }
 
@@ -704,7 +759,7 @@ export function createScrapeWorker(jobStore: JobStore) {
         }
 
         jobStore.setError(jobId, errMsg);
-        jobStore.updateStatus(jobId, "failed", "Otter extraction failed");
+        jobStore.updateStatus(jobId, "failed", `${providerName} extraction failed`);
         return;
       }
 

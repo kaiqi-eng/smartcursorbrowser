@@ -39,6 +39,10 @@ export const env = {
   otterLoginEmail: (process.env.OTTER_LOGIN_EMAIL ?? "").trim(),
   otterLoginPassword: (process.env.OTTER_LOGIN_PASSWORD ?? "").trim(),
 
+  // Optional Loom credential override (used for sourceType=loom jobs)
+  loomLoginEmail: (process.env.LOOM_LOGIN_EMAIL ?? "").trim(),
+  loomLoginPassword: (process.env.LOOM_LOGIN_PASSWORD ?? "").trim(),
+
   // Oxylabs fallback credentials — use OXYLABS_USERNAME / OXYLABS_PASSWORD in .env
   oxylabsUsername: process.env.OXYLABS_USERNAME ?? "",
   oxylabsPassword: process.env.OXYLABS_PASSWORD ?? "",

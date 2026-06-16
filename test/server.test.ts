@@ -78,4 +78,30 @@ describe("server", () => {
     });
     expect(response.status).toBe(400);
   });
+
+  it("accepts loom transcript jobs and redacts credentials", async () => {
+    const app = createApp(createTestRuntime());
+    const response = await request(app).post("/jobs/loom-transcript").set("x-api-key", "test-api-key").send({
+      url: "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+      email: "user@example.com",
+      password: "12345678",
+    });
+    expect(response.status).toBe(202);
+    expect(response.body.jobId).toBeDefined();
+    expect(response.body.request.sourceType).toBe("loom");
+    expect(response.body.request.loginFields).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "email", value: expect.stringMatching(/^\*+/) }),
+        expect.objectContaining({ name: "password", value: expect.stringMatching(/^\*+/) }),
+      ]),
+    );
+  });
+
+  it("rejects loom transcript jobs without credentials", async () => {
+    const app = createApp(createTestRuntime());
+    const response = await request(app).post("/jobs/loom-transcript").set("x-api-key", "test-api-key").send({
+      url: "https://www.loom.com/share/0123456789abcdef0123456789abcdef",
+    });
+    expect(response.status).toBe(400);
+  });
 });
