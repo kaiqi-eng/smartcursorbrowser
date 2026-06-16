@@ -161,35 +161,29 @@ async function assertNoKnownLoginBlocker(page: Page): Promise<void> {
   }
 }
 
-async function submitEmailStep(page: Page): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    if (await waitForAnyVisible(page, PASSWORD_SELECTORS, 800)) {
-      return;
-    }
-    await dismissCookieBannerIfPresent(page);
-    await submitCurrentStep(page);
-    if (await waitForAnyVisible(page, PASSWORD_SELECTORS, 2500)) {
-      return;
-    }
-    await assertNoKnownLoginBlocker(page);
-  }
-  throw new Error("Loom email submit did not progress to password step");
+async function submitLoomEmailStep(page: Page): Promise<void> {
+  await dismissCookieBannerIfPresent(page);
+  const loomContinue = page.locator("button:has-text('Continue')").first();
+  await loomContinue.click({ timeout: 10000 });
+  await page.waitForURL(/atlassian\.com/i, { timeout: 30000 });
+  await page.waitForTimeout(1500);
 }
 
-async function submitPasswordStep(page: Page, targetUrl: string): Promise<void> {
-  for (let attempt = 0; attempt < 4; attempt += 1) {
-    await dismissCookieBannerIfPresent(page);
-    await submitCurrentStep(page);
-    await page.waitForTimeout(1500);
-    await assertNoKnownLoginBlocker(page);
-
-    if (!(await hasVisibleInput(page, PASSWORD_SELECTORS)) || !/\/login(?:[/?#]|$)/i.test(page.url())) {
-      await page.goto(targetUrl, { waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(1000);
-      return;
-    }
+async function submitAtlassianLoginStep(page: Page, password: string): Promise<void> {
+  const atlassianContinue = page.locator("button:has-text('Continue')").first();
+  if ((await atlassianContinue.count()) > 0 && (await atlassianContinue.isVisible().catch(() => false))) {
+    await atlassianContinue.click({ timeout: 10000 });
+    await page.waitForTimeout(2000);
   }
-  throw new Error("Loom password submit did not establish an authenticated session");
+
+  const passwordInput = page.locator("input[data-testid='password'], input#password, input[type='password']").first();
+  await passwordInput.waitFor({ state: "visible", timeout: 15000 });
+  await passwordInput.fill(password, { timeout: 10000 });
+
+  const loginButton = page.locator("button:has-text('Log in'), button:has-text('Login')").first();
+  await loginButton.click({ timeout: 10000 });
+  await page.waitForURL(/loom\.com/i, { timeout: 60000 });
+  await assertNoKnownLoginBlocker(page);
 }
 
 export async function performLoomLoginFlow(page: Page, url: string, loginFields: LoginFieldInput[]): Promise<void> {
@@ -203,17 +197,13 @@ export async function performLoomLoginFlow(page: Page, url: string, loginFields:
   await page.goto(LOOM_LOGIN_URL, { waitUntil: "domcontentloaded" });
   await dismissCookieBannerIfPresent(page);
 
-  const emailFilled = await fillFirstInteractable(page, EMAIL_SELECTORS, email);
-  if (!emailFilled) {
-    throw new Error("Unable to locate Loom email input");
-  }
+  const emailInput = page.locator("input[name='email'], input#email, input[type='email']").first();
+  await emailInput.waitFor({ state: "visible", timeout: 15000 });
+  await emailInput.fill(email, { timeout: 10000 });
 
-  await submitEmailStep(page);
+  await submitLoomEmailStep(page);
+  await submitAtlassianLoginStep(page, password);
 
-  const passwordFilled = await fillFirstInteractable(page, PASSWORD_SELECTORS, password);
-  if (!passwordFilled) {
-    throw new Error("Unable to locate Loom password input");
-  }
-
-  await submitPasswordStep(page, url);
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(1000);
 }

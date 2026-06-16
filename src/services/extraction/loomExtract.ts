@@ -342,9 +342,6 @@ async function fetchLoomMetadata(page: Page, videoId: string): Promise<LoomMetad
           description
           chapters
         }
-        ... on GenericError {
-          message
-        }
       }
     }`,
     { id: videoId, password: null },
