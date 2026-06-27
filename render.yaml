@@ -16,8 +16,14 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_BASE_URL
+        value: https://openrouter.ai/api/v1
       - key: OPENAI_MODEL
-        value: gpt-4.1-mini
+        value: openai/gpt-4.1-mini
+      - key: OPENROUTER_HTTP_REFERER
+        sync: false
+      - key: OPENROUTER_APP_TITLE
+        value: smartcursorbrowser
       - key: PLAYWRIGHT_BROWSERS_PATH
         value: /opt/render/project/src/.playwright
       - key: MAX_JOB_STEPS

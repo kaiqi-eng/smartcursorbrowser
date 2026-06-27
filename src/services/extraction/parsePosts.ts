@@ -9,6 +9,7 @@ interface ParsedPost {
 
 const HTML_MODEL_INPUT_MAX_CHARS = 180000;
 const TEXT_MODEL_INPUT_MAX_CHARS = 60000;
+type ModelCompletion = { choices?: Array<{ message?: { content?: string | null } }> };
 
 function makeHeadTailSnippet(content: string, maxChars: number): string {
   if (content.length <= maxChars) {
@@ -106,43 +107,31 @@ function coercePosts(value: unknown): ParsedPost[] {
     .filter((item): item is ParsedPost => item !== null);
 }
 
-export async function parsePostsFromRawText(rawText: string, goal: string): Promise<ParsedPost[]> {
-  if (!rawText.trim() || !env.openaiApiKey) {
-    return [];
-  }
-  const textForModel = makeHeadTailSnippet(rawText, TEXT_MODEL_INPUT_MAX_CHARS);
+function extractModelContent(completion: ModelCompletion): string {
+  return completion.choices?.[0]?.message?.content?.trim() ?? "";
+}
 
+async function createStructuredCompletion(params: {
+  messages: Array<{ role: "system" | "user"; content: string }>;
+  maxTokens: number;
+  schemaName: string;
+  timeoutLabel: string;
+}): Promise<ModelCompletion> {
   const client = getOpenAIClient();
+  const baseRequest = {
+    model: env.openaiModel,
+    messages: params.messages,
+    max_tokens: params.maxTokens,
+  };
+
   try {
-    const completion = (await withTimeout(
+    return (await withTimeout(
       client.chat.completions.create({
-        model: env.openaiModel,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Extract post-like entries from website text. Keep wording as close to source as possible and avoid paraphrasing.",
-          },
-          {
-            role: "user",
-            content: [
-              "Return an object with a single key `posts` as an array of `{timestamp, content}`.",
-              "Rules:",
-              "- Keep content as raw text chunks with only minimal cleanup.",
-              "- Timestamp must be a relative label copied from source such as `1d`, `1h`, `30m`.",
-              "- Do not extract or infer titles.",
-              "- If a post does not have a clear relative timestamp label, omit that post.",
-              "- If there are no clear posts, return `{ \"posts\": [] }`.",
-              `Goal context: ${goal}`,
-              "Source text:",
-              textForModel,
-            ].join("\n"),
-          },
-        ],
+        ...baseRequest,
         response_format: {
           type: "json_schema",
           json_schema: {
-            name: "parsed_posts",
+            name: params.schemaName,
             schema: {
               type: "object",
               additionalProperties: false,
@@ -165,15 +154,58 @@ export async function parsePostsFromRawText(rawText: string, goal: string): Prom
             strict: true,
           },
         },
-        max_tokens: 1200,
       }),
       env.aiTimeoutMs,
-      "parse posts from raw text",
-    )) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
-    };
+      params.timeoutLabel,
+    )) as ModelCompletion;
+  } catch {
+    return (await withTimeout(
+      client.chat.completions.create({
+        ...baseRequest,
+        response_format: { type: "json_object" },
+      }),
+      env.aiTimeoutMs,
+      `${params.timeoutLabel} (json_object fallback)`,
+    )) as ModelCompletion;
+  }
+}
 
-    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+export async function parsePostsFromRawText(rawText: string, goal: string): Promise<ParsedPost[]> {
+  if (!rawText.trim() || !env.openaiApiKey) {
+    return [];
+  }
+  const textForModel = makeHeadTailSnippet(rawText, TEXT_MODEL_INPUT_MAX_CHARS);
+
+  try {
+    const completion = await createStructuredCompletion({
+      messages: [
+        {
+          role: "system",
+          content:
+            "Extract post-like entries from website text. Keep wording as close to source as possible and avoid paraphrasing.",
+        },
+        {
+          role: "user",
+          content: [
+            "Return an object with a single key `posts` as an array of `{timestamp, content}`.",
+            "Rules:",
+            "- Keep content as raw text chunks with only minimal cleanup.",
+            "- Timestamp must be a relative label copied from source such as `1d`, `1h`, `30m`.",
+            "- Do not extract or infer titles.",
+            "- If a post does not have a clear relative timestamp label, omit that post.",
+            '- If there are no clear posts, return `{ "posts": [] }`.',
+            `Goal context: ${goal}`,
+            "Source text:",
+            textForModel,
+          ].join("\n"),
+        },
+      ],
+      maxTokens: 1200,
+      schemaName: "parsed_posts",
+      timeoutLabel: "parse posts from raw text",
+    });
+
+    const content = extractModelContent(completion);
     if (!content) {
       return fallbackParsePosts(rawText);
     }
@@ -192,69 +224,37 @@ export async function parsePostsFromHtml(rawHtml: string, goal: string, fallback
   }
   const htmlForModel = makeHeadTailSnippet(rawHtml, HTML_MODEL_INPUT_MAX_CHARS);
 
-  const client = getOpenAIClient();
   try {
-    const completion = (await withTimeout(
-      client.chat.completions.create({
-        model: env.openaiModel,
-        messages: [
-          {
-            role: "system",
-            content:
-              "Extract feed/post entries from HTML. Prefer article/card/feed items and keep wording close to source text without unnecessary paraphrase.",
-          },
-          {
-            role: "user",
-            content: [
-              "Return JSON object: {\"posts\": [{\"timestamp\": string, \"content\": string}]}",
-              "Rules:",
-              "- Use visible content from the HTML (avoid script/style/meta/json blobs).",
-              "- Include as many distinct posts as reliably identifiable.",
-              "- Include a relative timestamp label copied from source (examples: `1d`, `1h`, `30m`).",
-              "- Do not extract or infer titles.",
-              "- If a post has no clear relative timestamp label, omit it.",
-              "- If no posts are found, return {\"posts\":[]}.",
-              `Goal context: ${goal}`,
-              "Source HTML:",
-              htmlForModel,
-            ].join("\n"),
-          },
-        ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: "parsed_posts_html",
-            schema: {
-              type: "object",
-              additionalProperties: false,
-              properties: {
-                posts: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    additionalProperties: false,
-                    properties: {
-                      timestamp: { type: "string" },
-                      content: { type: "string" },
-                    },
-                    required: ["timestamp", "content"],
-                  },
-                },
-              },
-              required: ["posts"],
-            },
-            strict: true,
-          },
+    const completion = await createStructuredCompletion({
+      messages: [
+        {
+          role: "system",
+          content:
+            "Extract feed/post entries from HTML. Prefer article/card/feed items and keep wording close to source text without unnecessary paraphrase.",
         },
-        max_tokens: 1600,
-      }),
-      env.aiTimeoutMs,
-      "parse posts from html",
-    )) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
-    };
+        {
+          role: "user",
+          content: [
+            'Return JSON object: {"posts": [{"timestamp": string, "content": string}]}',
+            "Rules:",
+            "- Use visible content from the HTML (avoid script/style/meta/json blobs).",
+            "- Include as many distinct posts as reliably identifiable.",
+            "- Include a relative timestamp label copied from source (examples: `1d`, `1h`, `30m`).",
+            "- Do not extract or infer titles.",
+            "- If a post has no clear relative timestamp label, omit it.",
+            '- If no posts are found, return {"posts":[]}.',
+            `Goal context: ${goal}`,
+            "Source HTML:",
+            htmlForModel,
+          ].join("\n"),
+        },
+      ],
+      maxTokens: 1600,
+      schemaName: "parsed_posts_html",
+      timeoutLabel: "parse posts from html",
+    });
 
-    const content = completion.choices?.[0]?.message?.content?.trim() ?? "";
+    const content = extractModelContent(completion);
     if (!content) {
       return fallbackRawText.trim() ? parsePostsFromRawText(fallbackRawText, goal) : [];
     }

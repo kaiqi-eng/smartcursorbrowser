@@ -1,6 +1,6 @@
 # Smart Cursor Browser Backend
 
-AI-agent backend service for scraping dynamic and authenticated websites by driving a real browser with Playwright and OpenAI visual reasoning.
+AI-agent backend service for scraping dynamic and authenticated websites by driving a real browser with Playwright and OpenRouter-compatible visual reasoning.
 
 ## What It Does
 
@@ -20,7 +20,7 @@ AI-agent backend service for scraping dynamic and authenticated websites by driv
 
 - Node.js 20+
 - Playwright browser dependencies (installed via package)
-- OpenAI API key
+- OpenRouter (or OpenAI-compatible) API key
 
 ## Quick Start
 
@@ -36,7 +36,15 @@ npm install
 copy .env.example .env
 ```
 
-3. Set `SERVICE_API_KEY` and `OPENAI_API_KEY` in `.env`.
+3. Set the key env vars in `.env`:
+   - `SERVICE_API_KEY`
+   - `OPENAI_API_KEY` (use your OpenRouter key when running on OpenRouter)
+   - `OPENAI_BASE_URL=https://openrouter.ai/api/v1`
+   - `OPENAI_MODEL=openai/gpt-4.1-mini` (or another OpenRouter model slug)
+
+   Optional OpenRouter headers:
+   - `OPENROUTER_HTTP_REFERER`
+   - `OPENROUTER_APP_TITLE`
 
 4. Start dev server:
 
@@ -50,6 +58,10 @@ npm run dev
 - OpenAPI JSON: [http://localhost:3000/openapi.json](http://localhost:3000/openapi.json)
 - In Swagger, click **Authorize** and set `x-api-key` to your `SERVICE_API_KEY`.
 - Frontend UI: [http://localhost:3000/app](http://localhost:3000/app)
+
+Model capability note:
+- The navigation planner needs a model with vision support.
+- Extraction and goal validation are best with models that support structured JSON outputs (`json_schema`/`json_object`).
 
 ## API Endpoints
 
@@ -161,7 +173,11 @@ This repo includes `render.yaml` for Blueprint deploy.
 4. Set secret env vars in Render dashboard:
    - `SERVICE_API_KEY`
    - `OPENAI_API_KEY`
-5. Deploy and verify health endpoint:
+   - `OPENROUTER_HTTP_REFERER` (optional)
+5. Verify non-secret OpenRouter defaults in `render.yaml`:
+   - `OPENAI_BASE_URL=https://openrouter.ai/api/v1`
+   - `OPENAI_MODEL=openai/gpt-4.1-mini`
+6. Deploy and verify health endpoint:
    - `https://<your-render-service>/health`
 
 Notes:

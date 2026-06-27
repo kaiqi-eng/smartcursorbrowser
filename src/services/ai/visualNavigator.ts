@@ -80,38 +80,41 @@ export async function getNextAction(context: ActionContext, trace: JobTraceEvent
   const client = getOpenAIClient();
 
   const userContent: Array<
-    | { type: "input_text"; text: string }
-    | { type: "input_image"; image_url: string; detail: "low" | "high" | "auto" }
-  > = [{ type: "input_text", text: buildUserPrompt(context, trace) }];
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string; detail: "low" | "high" | "auto" } }
+  > = [{ type: "text", text: buildUserPrompt(context, trace) }];
 
   if (context.screenshotBase64) {
     userContent.push({
-      type: "input_image",
-      image_url: `data:image/jpeg;base64,${context.screenshotBase64}`,
-      detail: "low",
+      type: "image_url",
+      image_url: {
+        url: `data:image/jpeg;base64,${context.screenshotBase64}`,
+        detail: "low",
+      },
     });
   }
 
   const response = (await withTimeout(
-    client.responses.create({
+    client.chat.completions.create({
       model: env.openaiModel,
-      input: [
+      messages: [
         {
           role: "system",
-          content: [{ type: "input_text", text: SYSTEM_PROMPT }],
+          content: SYSTEM_PROMPT,
         },
         {
           role: "user",
           content: userContent,
         },
       ],
-      max_output_tokens: 250,
+      response_format: { type: "json_object" },
+      max_tokens: 250,
     }),
     env.aiTimeoutMs,
     "visual navigator action planning",
-  )) as { output_text?: string };
+  )) as { choices?: Array<{ message?: { content?: string | null } }> };
 
-  const outputText = response.output_text?.trim();
+  const outputText = response.choices?.[0]?.message?.content?.trim();
   if (!outputText) {
     return FALLBACK_ACTION;
   }

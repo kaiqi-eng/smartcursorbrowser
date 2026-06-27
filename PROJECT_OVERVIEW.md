@@ -8,7 +8,7 @@ This document explains the full project at a system level: what it does, how req
 
 - **Express** for API endpoints
 - **Playwright** for real browser automation
-- **OpenAI** for action planning and extraction validation
+- **OpenRouter-compatible LLM API** for action planning and extraction validation
 
 The service is designed for pages that static HTML scraping cannot handle (logged-in flows, dynamic feeds, lazy-loaded content, in-app navigation).
 
@@ -97,9 +97,9 @@ Differences from generic flow:
 ### Navigation planner
 
 - `src/services/ai/visualNavigator.ts`
-- Uses OpenAI Responses API with:
+- Uses Chat Completions with vision input (`image_url`) and JSON object output:
   - strict JSON action schema
-  - optional screenshot input (`input_image`)
+  - optional screenshot input
   - recent trace + last error for replanning
 
 Output is a `BrowserAction` (`goto`, `click`, `type`, `wait`, `scroll`, `extract`, `done`).
@@ -109,7 +109,7 @@ Output is a `BrowserAction` (`goto`, `click`, `type`, `wait`, `scroll`, `extract
 - `parsePostsFromRawText(...)`: extracts post-like timestamped content
 - `validateGoalAgainstExtraction(...)`: determines whether the extraction satisfies the user goal
 
-Both use structured JSON outputs and safe fallback behavior when model calls fail.
+Both use structured JSON outputs with safe fallback behavior when model calls fail or strict schema mode is unsupported.
 
 ## 7) Browser automation layer
 
@@ -178,7 +178,10 @@ Core variables:
 - `PORT`
 - `SERVICE_API_KEY`
 - `OPENAI_API_KEY`
+- `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
+- `OPENROUTER_HTTP_REFERER` (optional)
+- `OPENROUTER_APP_TITLE` (optional)
 - `MAX_JOB_STEPS`
 - `JOB_TIMEOUT_MS`
 - `ALLOWED_DOMAINS`
@@ -213,7 +216,7 @@ Current test focus is API behavior and Otter extraction/validation logic.
 
 - **In-memory state only**: jobs do not survive process restarts.
 - **Single process queue**: no horizontal queue worker distribution out of the box.
-- **LLM dependency for planning/validation**: output quality depends on model behavior and prompt alignment.
+- **LLM dependency for planning/validation**: output quality depends on model behavior, prompt alignment, and model support for vision + structured JSON.
 - **Dynamic-site variability**: login and blocker behavior can differ significantly by target site.
 
 For production scaling, typical next steps are persistent storage, distributed queueing, richer observability, and stronger site-specific adapters.
